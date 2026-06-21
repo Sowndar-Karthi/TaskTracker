@@ -6,7 +6,7 @@
   * PUBLIC ENTRY POINTS:
   *   syncExistingTasksToGoogle()     — in TestAllTrackers.gs (calls syncAllGoogleTasksFromDevTracker)
   *   syncGoogleTaskForMainRow(2)    — on-edit / single main row (pass row number)
-  *   syncGoogleSubtaskForSubRow()    — on-edit / single sub row
+  *   syncGoogleSubtaskForSubRow()    — on-edit / single sub row (skipped when GOOGLE_TASKS_SYNC_SUBTASKS=false)
   *   backfillSubParentGoogleTaskIdsIfEmpty()
   *   resetAllGoogleTasksAndRecreate()
   *   verifyGoogleTaskLists()
@@ -19,6 +19,9 @@
   * LARGE SHEETS (2000–5000 subs): CONFIG.GOOGLE_TASKS_SYNC_BATCH_SIZE = 300 per run;
   *   auto-continues every ~1 min until finished (GOOGLE_TASKS_AUTO_CONTINUE_BULK).
   *
+  * MAIN-ONLY MODE: set CONFIG.GOOGLE_TASKS_SYNC_SUBTASKS = false in ProjectTracker.gs
+  *   to sync Dev Tracker main tasks only (no Google subtasks).
+  *
   * SYNC MODES (log prefix [GoogleTasks:…]):
   *   ROW | TARGETED | BULK-MAIN | BULK-SUB | BULK
   */
@@ -27,9 +30,16 @@
   const SCRIPT_PROP_GOOGLE_TASKS_LAST_SYNC_LOG = "GOOGLE_TASKS_LAST_SYNC_LOG";
   const SCRIPT_PROP_GOOGLE_TASKS_BULK_IN_PROGRESS = "GOOGLE_TASKS_BULK_IN_PROGRESS";
   const SCRIPT_PROP_GOOGLE_TASKS_TEST_SUITE_RUNNING = "GOOGLE_TASKS_TEST_SUITE_RUNNING";
-  const SCRIPT_PROP_GOOGLE_SYNC_SUB_TOTAL = "GOOGLE_TASKS_SYNC_SUB_TOTAL";
+const SCRIPT_PROP_GOOGLE_SYNC_SUB_TOTAL = "GOOGLE_TASKS_SYNC_SUB_TOTAL";
 
-  /** Per-sheet header fingerprints used to invalidate column caches mid-execution. */
+/** Google Tasks API field and quota limits (tasks.insert / tasks.move). */
+const GOOGLE_TASKS_MAX_TITLE_LEN = 1024;
+const GOOGLE_TASKS_MAX_NOTES_LEN = 8192;
+const GOOGLE_TASKS_MAX_NON_HIDDEN_PER_LIST = 20000;
+const GOOGLE_TASKS_MAX_TOTAL_TASKS = 100000;
+const GOOGLE_TASKS_MAX_SUBTASKS_PER_PARENT = 2000;
+
+/** Per-sheet header fingerprints used to invalidate column caches mid-execution. */
   let projectMainColumnCacheHeaderHash_ = null;
   let projectSubColumnCacheHeaderHash_ = null;
 
@@ -286,6 +296,7 @@
       try {
         Tasks.Tasks.remove(listId, taskId);
         invalidateTaskListIdCacheForTask_(taskId);
+        invalidateGoogleTaskQuotaCache_();
         Logger.log('Removed Google subtask for Dev Tracker Sub row ' + row + ': ' + taskId);
       } catch (error) {
         Logger.log('removeGoogleSubtaskForRowIfExists_ Error (row ' + row + '): ' + error.toString());
@@ -349,8 +360,10 @@
 
   /** Cached map: normalized list name -> Google Task list ID (per execution). */
   let googleTaskListCache_ = null;
-  /** Per-execution taskId → listId map; reset at bulk sync start; entries validated on read. */
-  let taskIdToListIdCache_ = null;
+/** Per-execution taskId → listId map; reset at bulk sync start; entries validated on read. */
+let taskIdToListIdCache_ = null;
+/** Per-execution list/total/subtask counts for quota guards (lazy full refresh). */
+let googleTaskQuotaCache_ = null;
 
   /** Cached 1-based column index for main Google Task ID (per execution). */
   let projectGoogleTaskIdColCache_ = null;
@@ -377,6 +390,14 @@
       Logger.log('isGoogleTasksApiEnabled_ Error: ' + error.toString());
       return false;
     }
+  }
+
+  /**
+  * When CONFIG.GOOGLE_TASKS_SYNC_SUBTASKS is false, only main Google Tasks are synced.
+  * @returns {boolean}
+  */
+  function isGoogleTasksSubtaskSyncEnabled_() {
+    return CONFIG.GOOGLE_TASKS_SYNC_SUBTASKS !== false;
   }
 
   /**
@@ -588,7 +609,7 @@
       subSheet,
       CONFIG.SUB_GOOGLE_TASK_ID_COL,
       'Google Subtask ID',
-      ['google subtask id', 'google subtask', 'google task id']
+      ['google subtask id', 'google subtask', 'subtask id', 'sub-task id']
     );
     return projectGoogleSubtaskIdColCache_;
   }
@@ -1318,6 +1339,328 @@
   }
 
   /**
+  * Truncates text to a Google Tasks API max length (title or notes).
+  * @param {string} text
+  * @param {number} maxLen
+  * @param {string} [truncateLabel] Shown in notes suffix when truncated
+  * @returns {string}
+  */
+  function truncateTextForGoogleTaskApi_(text, maxLen, truncateLabel) {
+    const s = (text || '').toString();
+    if (s.length <= maxLen) {
+      return s;
+    }
+    if (truncateLabel) {
+      const suffix = '\n… [' + truncateLabel + ']';
+      const keep = Math.max(0, maxLen - suffix.length);
+      return s.substring(0, keep) + suffix;
+    }
+    return s.substring(0, Math.max(0, maxLen - 1)) + '…';
+  }
+
+  /**
+  * @param {string} title
+  * @returns {string}
+  */
+  function sanitizeGoogleTaskTitle_(title) {
+    return truncateTextForGoogleTaskApi_((title || '').toString().trim(), GOOGLE_TASKS_MAX_TITLE_LEN, '');
+  }
+
+  /**
+  * @param {string} notes
+  * @returns {string}
+  */
+  function sanitizeGoogleTaskNotes_(notes) {
+    return truncateTextForGoogleTaskApi_(
+      notes || '',
+      GOOGLE_TASKS_MAX_NOTES_LEN,
+      'notes truncated to ' + GOOGLE_TASKS_MAX_NOTES_LEN + ' chars'
+    );
+  }
+
+  /**
+  * True when a task was assigned from Docs, Chat Spaces, etc. (cannot be parent or child via API).
+  * @param {Object|null} task Google Tasks Task resource from get/list
+  * @returns {boolean}
+  */
+  function isGoogleAssignedTask_(task) {
+    if (!task || !task.assignmentInfo) {
+      return false;
+    }
+    const info = task.assignmentInfo;
+    if (typeof info !== 'object') {
+      return false;
+    }
+    return !!(info.surfaceType || info.linkToTask || info.driveResourceInfo || info.spaceInfo);
+  }
+
+  function resetGoogleTaskQuotaCache_() {
+    googleTaskQuotaCache_ = null;
+  }
+
+  function invalidateGoogleTaskQuotaCache_() {
+    googleTaskQuotaCache_ = null;
+  }
+
+  /**
+  * Counts tasks in one list; accumulates parent→subtask counts into parentSubCounts.
+  * @param {string} listId
+  * @param {Object<string, number>} parentSubCounts
+  * @returns {{nonHidden: number, total: number}}
+  */
+  function countTasksInGoogleListForQuota_(listId, parentSubCounts) {
+    let nonHidden = 0;
+    let total = 0;
+    let pageToken = null;
+
+    do {
+      const opts = { showCompleted: true, showHidden: true, maxResults: 100 };
+      if (pageToken) {
+        opts.pageToken = pageToken;
+      }
+
+      let response;
+      try {
+        response = Tasks.Tasks.list(listId, opts);
+      } catch (error) {
+        Logger.log('countTasksInGoogleListForQuota_ Error (' + listId + '): ' + error.toString());
+        break;
+      }
+
+      const items = response.items || [];
+      for (let i = 0; i < items.length; i++) {
+        const task = items[i];
+        if (!task || task.deleted) {
+          continue;
+        }
+        total++;
+        if (!task.hidden) {
+          nonHidden++;
+        }
+        const parentId = (task.parent || '').toString().trim();
+        if (parentId) {
+          parentSubCounts[parentId] = (parentSubCounts[parentId] || 0) + 1;
+        }
+      }
+
+      pageToken = response.nextPageToken || null;
+    } while (pageToken);
+
+    return { nonHidden: nonHidden, total: total };
+  }
+
+  /**
+  * Builds per-execution quota cache (all user lists) on first insert guard check.
+  * @returns {Object}
+  */
+  function ensureGoogleTaskQuotaCache_() {
+    if (googleTaskQuotaCache_) {
+      return googleTaskQuotaCache_;
+    }
+
+    const cache = {
+      listCounts: {},
+      totalTasks: 0,
+      parentSubCounts: {}
+    };
+
+    if (!isGoogleTasksApiEnabled_()) {
+      googleTaskQuotaCache_ = cache;
+      return cache;
+    }
+
+    const started = Date.now();
+    let listPageToken = null;
+    do {
+      const listOpts = { maxResults: 100 };
+      if (listPageToken) {
+        listOpts.pageToken = listPageToken;
+      }
+
+      let listResponse;
+      try {
+        listResponse = Tasks.Tasklists.list(listOpts);
+      } catch (error) {
+        Logger.log('ensureGoogleTaskQuotaCache_ Tasklists.list Error: ' + error.toString());
+        break;
+      }
+
+      const lists = listResponse.items || [];
+      for (let li = 0; li < lists.length; li++) {
+        const listId = lists[li].id;
+        if (!listId) {
+          continue;
+        }
+        const counts = countTasksInGoogleListForQuota_(listId, cache.parentSubCounts);
+        cache.listCounts[listId] = counts;
+        cache.totalTasks += counts.total;
+      }
+
+      listPageToken = listResponse.nextPageToken || null;
+    } while (listPageToken);
+
+    googleTaskQuotaCache_ = cache;
+    Logger.log(
+      'Google Tasks quota cache: ' + cache.totalTasks + ' task(s) in ' +
+      Object.keys(cache.listCounts).length + ' list(s) (' + (Date.now() - started) + ' ms)'
+    );
+    return cache;
+  }
+
+  /**
+  * @param {string} listId
+  * @param {string} [parentTaskId]
+  */
+  function bumpGoogleTaskQuotaAfterInsert_(listId, parentTaskId) {
+    if (!googleTaskQuotaCache_) {
+      return;
+    }
+
+    const lc = googleTaskQuotaCache_.listCounts[listId];
+    if (lc) {
+      lc.nonHidden += 1;
+      lc.total += 1;
+    } else {
+      googleTaskQuotaCache_.listCounts[listId] = { nonHidden: 1, total: 1 };
+    }
+    googleTaskQuotaCache_.totalTasks += 1;
+
+    const parentId = (parentTaskId || '').toString().trim();
+    if (parentId) {
+      googleTaskQuotaCache_.parentSubCounts[parentId] =
+        (googleTaskQuotaCache_.parentSubCounts[parentId] || 0) + 1;
+    }
+  }
+
+  /**
+  * @param {string} listId
+  * @returns {boolean}
+  */
+  function canInsertGoogleTaskInList_(listId) {
+    ensureGoogleTaskQuotaCache_();
+    const counts = googleTaskQuotaCache_.listCounts[listId];
+    if (counts && counts.nonHidden >= GOOGLE_TASKS_MAX_NON_HIDDEN_PER_LIST) {
+      Logger.log(
+        'Google Tasks list ' + listId + ' at non-hidden limit (' +
+        GOOGLE_TASKS_MAX_NON_HIDDEN_PER_LIST + ') — cannot insert.'
+      );
+      return false;
+    }
+    return true;
+  }
+
+  /**
+  * @returns {boolean}
+  */
+  function canInsertGoogleTaskGlobally_() {
+    ensureGoogleTaskQuotaCache_();
+    if (googleTaskQuotaCache_.totalTasks >= GOOGLE_TASKS_MAX_TOTAL_TASKS) {
+      Logger.log(
+        'Google Tasks account at total task limit (' +
+        GOOGLE_TASKS_MAX_TOTAL_TASKS + ') — cannot insert.'
+      );
+      return false;
+    }
+    return true;
+  }
+
+  /**
+  * @param {string} parentTaskId
+  * @returns {boolean}
+  */
+  function canAddSubtaskUnderParent_(parentTaskId) {
+    const parentId = (parentTaskId || '').toString().trim();
+    if (!parentId) {
+      return true;
+    }
+    ensureGoogleTaskQuotaCache_();
+    const subCount = googleTaskQuotaCache_.parentSubCounts[parentId] || 0;
+    if (subCount >= GOOGLE_TASKS_MAX_SUBTASKS_PER_PARENT) {
+      Logger.log(
+        'Parent task ' + parentId + ' at subtask limit (' +
+        GOOGLE_TASKS_MAX_SUBTASKS_PER_PARENT + ') — cannot add subtask.'
+      );
+      return false;
+    }
+    return true;
+  }
+
+  /**
+  * @param {Object} error
+  * @returns {boolean}
+  */
+  function isGoogleTasksTransientApiError_(error) {
+    const errMsg = (error && error.toString ? error.toString() : String(error)).toLowerCase();
+    return errMsg.indexOf('429') >= 0 ||
+      errMsg.indexOf('503') >= 0 ||
+      errMsg.indexOf('ratelimitexceeded') >= 0 ||
+      errMsg.indexOf('rate limit') >= 0 ||
+      errMsg.indexOf('backend error') >= 0 ||
+      errMsg.indexOf('service unavailable') >= 0;
+  }
+
+  /**
+  * Inserts a Google Task with API field sanitization, quota guards, and transient-error retries.
+  * @param {Object} taskResource title, notes, optional status
+  * @param {string} listId
+  * @param {Object} [optionalArgs] e.g. { parent, previous }
+  * @returns {Object|null}
+  */
+  function insertGoogleTask_(taskResource, listId, optionalArgs) {
+    if (!listId) {
+      return null;
+    }
+    if (!canInsertGoogleTaskInList_(listId) || !canInsertGoogleTaskGlobally_()) {
+      return null;
+    }
+
+    const parentId = optionalArgs && optionalArgs.parent
+      ? optionalArgs.parent.toString().trim()
+      : '';
+    if (parentId && !canAddSubtaskUnderParent_(parentId)) {
+      return null;
+    }
+
+    const body = {};
+    if (taskResource && taskResource.title !== undefined) {
+      body.title = sanitizeGoogleTaskTitle_(taskResource.title);
+    }
+    if (taskResource && taskResource.notes !== undefined) {
+      body.notes = sanitizeGoogleTaskNotes_(taskResource.notes);
+    }
+    if (taskResource && taskResource.status !== undefined) {
+      body.status = taskResource.status;
+    }
+
+    const maxRetries = 3;
+    let delay = 500;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const created = optionalArgs
+          ? Tasks.Tasks.insert(body, listId, optionalArgs)
+          : Tasks.Tasks.insert(body, listId);
+        bumpGoogleTaskQuotaAfterInsert_(listId, parentId);
+        return created;
+      } catch (error) {
+        if (isGoogleTasksTransientApiError_(error) && attempt < maxRetries - 1) {
+          Logger.log(
+            'insertGoogleTask_: transient API error on attempt ' + (attempt + 1) +
+            ' — retrying in ' + delay + 'ms: ' + error.toString()
+          );
+          Utilities.sleep(delay);
+          delay *= 2;
+          continue;
+        }
+        Logger.log('insertGoogleTask_ Error: ' + error.toString());
+        return null;
+      }
+    }
+
+    return null;
+  }
+
+  /**
   * True when this sub row should get a disambiguating Google Tasks title suffix.
   * @param {string} subTaskName
   * @param {Object<string, number>} titleDuplicateIndex
@@ -1347,16 +1690,18 @@
       return base;
     }
     if (!shouldSuffixGoogleSubtaskTitle_(base, titleDuplicateIndex)) {
-      return base;
+      return sanitizeGoogleTaskTitle_(base);
     }
 
     const mainShort = shortenTextForGoogleTaskTitle_(linkedMainName, 36);
     const suffix = mainShort ? ' [' + mainShort + ' · #' + row + ']' : ' [Sub #' + row + ']';
-    const maxLen = 200;
+    const maxLen = GOOGLE_TASKS_MAX_TITLE_LEN;
     if (base.length + suffix.length <= maxLen) {
-      return base + suffix;
+      return sanitizeGoogleTaskTitle_(base + suffix);
     }
-    return shortenTextForGoogleTaskTitle_(base, maxLen - suffix.length) + suffix;
+    return sanitizeGoogleTaskTitle_(
+      shortenTextForGoogleTaskTitle_(base, maxLen - suffix.length) + suffix
+    );
   }
 
   /**
@@ -1407,7 +1752,7 @@
     const titles = getSubGoogleTaskTitlesForRow_(subTaskName, row, linkedMainName, titleDuplicateIndex);
     return {
       title: titles.googleTitle,
-      notes: buildSubGoogleTaskNotes_(subData, row, linkedMainName),
+      notes: sanitizeGoogleTaskNotes_(buildSubGoogleTaskNotes_(subData, row, linkedMainName)),
       baseTitle: titles.baseTitle,
       googleTitle: titles.googleTitle
     };
@@ -1421,10 +1766,10 @@
   function patchGoogleTask_(taskListId, taskId, taskResource) {
     const patch = {};
     if (taskResource && taskResource.title !== undefined) {
-      patch.title = taskResource.title;
+      patch.title = sanitizeGoogleTaskTitle_(taskResource.title);
     }
     if (taskResource && taskResource.notes !== undefined) {
-      patch.notes = taskResource.notes;
+      patch.notes = sanitizeGoogleTaskNotes_(taskResource.notes);
     }
     if (taskResource && taskResource.status !== undefined) {
       patch.status = taskResource.status;
@@ -1454,6 +1799,19 @@
 
     try {
       const parent = Tasks.Tasks.get(listId, parentTaskId);
+      if (isGoogleAssignedTask_(parent)) {
+        Logger.log(
+          'Parent Google Task ' + parentTaskId +
+          ' is assigned from Docs/Chat — cannot nest subtasks (Google Tasks API).'
+        );
+        return false;
+      }
+      if (parent.hidden) {
+        Logger.log(
+          'Parent Google Task ' + parentTaskId + ' is hidden — cannot nest subtasks (Google Tasks API).'
+        );
+        return false;
+      }
       if (parent.status === 'completed') {
         patchGoogleTask_(listId, parentTaskId, { status: 'needsAction' });
         Logger.log('Reopened parent Google Task ' + parentTaskId + ' (sheet status is still open).');
@@ -1504,6 +1862,7 @@
     try {
       Tasks.Tasks.remove(listId, taskId);
       invalidateTaskListIdCacheForTask_(taskId);
+      invalidateGoogleTaskQuotaCache_();
       Logger.log('Removed Google Task ' + taskId + ' from list ' + listId);
     } catch (error) {
       Logger.log('removeGoogleTaskFromAnyList_ Error: ' + error.toString());
@@ -1533,6 +1892,19 @@
     }
 
     if (!ensureGoogleParentTaskOpenForSubtasks_(parentListId, parentTaskId, parentSheetStatus)) {
+      return false;
+    }
+
+    try {
+      const taskToNest = Tasks.Tasks.get(currentListId, taskId);
+      if (isGoogleAssignedTask_(taskToNest)) {
+        Logger.log(
+          'Cannot nest assigned task ' + taskId + ' under a parent — Google Tasks API restriction.'
+        );
+        return false;
+      }
+    } catch (getErr) {
+      Logger.log('tryNestGoogleTaskUnderParent_ get task Error: ' + getErr.toString());
       return false;
     }
 
@@ -1709,47 +2081,71 @@
       return null;
     }
 
-    const created = Tasks.Tasks.insert(
+    if (!canAddSubtaskUnderParent_(parentTaskId)) {
+      return null;
+    }
+
+    const created = insertGoogleTask_(
       { title: taskResource.title, notes: taskResource.notes },
       parentListId,
       { parent: parentTaskId }
     );
 
-    if (created.parent === parentTaskId) {
-      Logger.log('Insert returned nested subtask ' + created.id + ' under parent ' + parentTaskId);
-      return created;
+    if (!created) {
+      return null;
+    }
+
+    let nestedSuccessfully = false;
+    let nestedTask = null;
+
+    try {
+      if (created.parent === parentTaskId) {
+        nestedSuccessfully = true;
+        nestedTask = created;
+        Logger.log('Insert returned nested subtask ' + created.id + ' under parent ' + parentTaskId);
+      } else {
+        Logger.log(
+          'Insert did not nest subtask ' + created.id + ' (parent=' + (created.parent || 'none') + ') — retrying move.'
+        );
+
+        Utilities.sleep(CONFIG.GOOGLE_TASKS_SYNC_SLEEP_MS || 50);
+
+        if (
+          tryNestGoogleTaskUnderParent_(parentListId, created.id, parentTaskId, parentListId, parentSheetStatus) &&
+          verifyGoogleTaskNestedUnderParent_(parentListId, created.id, parentTaskId, parentListId)
+        ) {
+          nestedSuccessfully = true;
+        } else {
+          Logger.log('insertGoogleSubtaskUnderParent_: first nest attempt failed or verify failed.');
+          Utilities.sleep(1000);
+          if (
+            tryNestGoogleTaskUnderParent_(parentListId, created.id, parentTaskId, parentListId, parentSheetStatus) &&
+            verifyGoogleTaskNestedUnderParent_(parentListId, created.id, parentTaskId, parentListId)
+          ) {
+            nestedSuccessfully = true;
+          }
+        }
+
+        if (nestedSuccessfully) {
+          try {
+            nestedTask = Tasks.Tasks.get(parentListId, created.id);
+          } catch (getErr) {
+            Logger.log('insertGoogleSubtaskUnderParent_ get after nest Error: ' + getErr.toString());
+            nestedTask = created;
+          }
+        }
+      }
+    } catch (nestError) {
+      Logger.log('insertGoogleSubtaskUnderParent_ nesting Error: ' + nestError.toString());
+    }
+
+    if (nestedSuccessfully && nestedTask) {
+      return nestedTask;
     }
 
     Logger.log(
-      'Insert did not nest subtask ' + created.id + ' (parent=' + (created.parent || 'none') + ') — retrying move.'
-    );
-
-    if (tryNestGoogleTaskUnderParent_(parentListId, created.id, parentTaskId, parentListId, parentSheetStatus)) {
-      if (verifyGoogleTaskNestedUnderParent_(parentListId, created.id, parentTaskId, parentListId)) {
-        try {
-          return Tasks.Tasks.get(parentListId, created.id);
-        } catch (getErr) {
-          Logger.log('insertGoogleSubtaskUnderParent_ get after nest Error: ' + getErr.toString());
-          return created;
-        }
-      }
-      Logger.log('insertGoogleSubtaskUnderParent_: nest retry reported success but verify failed.');
-    }
-
-    Utilities.sleep(1000);
-    if (tryNestGoogleTaskUnderParent_(parentListId, created.id, parentTaskId, parentListId, parentSheetStatus)) {
-      if (verifyGoogleTaskNestedUnderParent_(parentListId, created.id, parentTaskId, parentListId)) {
-        try {
-          return Tasks.Tasks.get(parentListId, created.id);
-        } catch (getErr2) {
-          Logger.log('insertGoogleSubtaskUnderParent_ get after retry Error: ' + getErr2.toString());
-        }
-      }
-    }
-
-    Logger.log(
-      'FAILED to nest subtask ' + created.id + ' under parent ' + parentTaskId +
-      ' after insert + retries — deleting top-level orphan.'
+      'Rollback: nesting failed for "' + (taskResource.title || '') + '" (id ' + created.id +
+      ') — removing stranded top-level task.'
     );
     removeGoogleTaskFromAnyList_(created.id);
     return null;
@@ -1869,6 +2265,7 @@
 
           Tasks.Tasks.remove(listId, t.id);
           invalidateTaskListIdCacheForTask_(t.id);
+          invalidateGoogleTaskQuotaCache_();
           Logger.log('Removed orphan top-level duplicate: "' + (t.title || base) + '" (id ' + t.id + ')');
         }
 
@@ -2467,15 +2864,19 @@
 
       const notes = buildMainGoogleTaskNotes_(data, row);
       const taskResource = {
-        title: taskName,
-        notes: notes
+        title: sanitizeGoogleTaskTitle_(taskName),
+        notes: sanitizeGoogleTaskNotes_(notes)
       };
 
       let taskId = getGoogleTaskIdForMainRow_(mainSheet, row);
       let activeListId = listId;
 
       if (!taskId) {
-        const created = Tasks.Tasks.insert(taskResource, listId);
+        const created = insertGoogleTask_(taskResource, listId);
+        if (!created) {
+          Logger.log('Failed to create Google Task for row ' + row + ' (quota, limits, or API error).');
+          return;
+        }
         taskId = created.id;
         activeListId = listId;
         setGoogleTaskIdForMainRow_(mainSheet, row, taskId);
@@ -2484,9 +2885,15 @@
       } else {
         const currentListId = findTaskListIdContainingTask_(taskId, listId);
         if (!currentListId) {
-          const recreated = Tasks.Tasks.insert(taskResource, listId);
+          const recreated = insertGoogleTask_(taskResource, listId);
+          if (!recreated) {
+            Logger.log('Failed to recreate Google Task for row ' + row + ' (quota, limits, or API error).');
+            return;
+          }
           setGoogleTaskIdForMainRow_(mainSheet, row, recreated.id);
           setGoogleTaskCompletion_(listId, recreated.id, isCompletedOrClosedStatus_(status));
+          cacheTaskListIdForTask_(recreated.id, listId);
+          refreshSubParentMappingsForMainRow_(mainSheet, row);
           Logger.log('Recreated missing Google Task for row ' + row);
           return;
         }
@@ -2528,6 +2935,9 @@
   function syncGoogleSubtaskForSubRow(subSheet, row, preValidated, titleDuplicateIndex) {
     try {
       if (!isGoogleTasksApiEnabled_()) {
+        return;
+      }
+      if (!isGoogleTasksSubtaskSyncEnabled_()) {
         return;
       }
 
@@ -2683,6 +3093,9 @@
   */
   function syncGoogleSubtasksForMainRow_(mainSheet, row, subData, mainLookup) {
     try {
+      if (!isGoogleTasksSubtaskSyncEnabled_()) {
+        return;
+      }
       if (!mainSheet || !row || row < 2) {
         return;
       }
@@ -2760,10 +3173,20 @@
       setGoogleTasksBulkSyncInProgress_(true);
       bulkFlagSet = true;
 
-      beginGoogleTasksSync_('BULK', 'full sheet — Dev Tracker mains first, then subs');
-      logGoogleTasksSync_('=== Syncing all Google Tasks (main parents first, then subs bottom-up) ===');
+      beginGoogleTasksSync_(
+        'BULK',
+        isGoogleTasksSubtaskSyncEnabled_()
+          ? 'full sheet — Dev Tracker mains first, then subs'
+          : 'full sheet — main tasks only (GOOGLE_TASKS_SYNC_SUBTASKS=false)'
+      );
+      logGoogleTasksSync_(
+        isGoogleTasksSubtaskSyncEnabled_()
+          ? '=== Syncing all Google Tasks (main parents first, then subs bottom-up) ==='
+          : '=== Syncing Google Tasks — main tasks only (subtasks disabled) ==='
+      );
       refreshGoogleTaskListCache_();
       taskIdToListIdCache_ = {};
+      resetGoogleTaskQuotaCache_();
 
       const mainSheet = getMainTrackerSheet_();
       const subSheet = getSubTrackerSheet_();
@@ -2836,11 +3259,15 @@
       let subCreated = 0;
       let subSkipped = 0;
 
+      const subSyncEnabled = isGoogleTasksSubtaskSyncEnabled_();
+      const bulkMainPhaseLabel = subSyncEnabled ? 'Phase 1/2' : 'Phase 1/1';
+
       // Phase 1: Dev Tracker rows that have a task name (column C) — empty rows never scanned when skipEmpty
       if (resumePhase === 'main') {
         googleTasksSyncContext_.mode = 'BULK-MAIN';
         logGoogleTasksSync_(
-          'Phase 1/2: Dev Tracker — ' + mainRowsToSync.length + ' main row(s) to sync (parents first)'
+          bulkMainPhaseLabel + ': Dev Tracker — ' + mainRowsToSync.length +
+          ' main row(s) to sync (parents first)'
         );
 
         let mainProcessedThisChunk = 0;
@@ -2885,11 +3312,11 @@
         }
 
         resumeRow = 0;
-        resumePhase = 'sub';
+        resumePhase = subSyncEnabled ? 'sub' : 'main';
       }
 
       // Phase 2: Dev Tracker Sub rows bottom-up (newest at bottom first)
-      if (resumePhase === 'sub' && subSheet && subData) {
+      if (resumePhase === 'sub' && subSheet && subData && subSyncEnabled) {
         let subRowsToSync;
         if (skipEmpty) {
           subRowsToSync = getSubRowNumbersWithDataBottomUp_(subData, subLastForScan);
@@ -2970,6 +3397,8 @@
           subProcessedThisChunk++;
           Utilities.sleep(syncSleep);
         }
+      } else if (resumePhase === 'sub' && !subSyncEnabled) {
+        logGoogleTasksSync_('Phase 2/2 skipped — GOOGLE_TASKS_SYNC_SUBTASKS is false (main tasks only).');
       }
 
       props.deleteProperty(SCRIPT_PROP_GOOGLE_SYNC_RESUME_ROW);
@@ -2980,7 +3409,9 @@
       const summary =
         'mains synced ' + mainSynced + ' (created ' + mainCreated + '), mains skipped ' + mainSkipped +
         ', main errors ' + mainErrors +
-        '; subs created ' + subCreated + ', subs skipped ' + subSkipped +
+        (subSyncEnabled
+          ? '; subs created ' + subCreated + ', subs skipped ' + subSkipped
+          : '; subs skipped (GOOGLE_TASKS_SYNC_SUBTASKS=false)') +
         (subEmptySkipped ? ', empty sub rows skipped ' + subEmptySkipped : '');
       logGoogleTasksSync_('=== Google Tasks sync complete ===');
       logGoogleTasksSync_(summary);
@@ -3004,6 +3435,10 @@
       Logger.log('Google Tasks API not enabled — add Services (+) > Google Tasks API first.');
       return;
     }
+    if (!isGoogleTasksSubtaskSyncEnabled_()) {
+      Logger.log('fixAllOrphanSubtasks skipped — GOOGLE_TASKS_SYNC_SUBTASKS is false (main tasks only).');
+      return;
+    }
 
     const mainSheet = getMainTrackerSheet_();
     const subSheet = getSubTrackerSheet_();
@@ -3015,6 +3450,7 @@
 
     refreshGoogleTaskListCache_();
     taskIdToListIdCache_ = {};
+    resetGoogleTaskQuotaCache_();
 
     const mainData = mainSheet.getDataRange().getValues();
     const mainLookup = buildMainTaskNameIndex_(mainData);
@@ -3313,6 +3749,7 @@
         try {
           Tasks.Tasks.remove(listId, task.id);
           deleted++;
+          invalidateGoogleTaskQuotaCache_();
         } catch (removeErr) {
           Logger.log('Failed to delete task ' + task.id + ': ' + removeErr.toString());
         }
@@ -3346,6 +3783,7 @@
       Utilities.sleep(200);
     }
 
+    resetGoogleTaskQuotaCache_();
     return totalDeleted;
   }
 
@@ -3358,6 +3796,7 @@
 
     clearProjectColumnCaches_();
     taskIdToListIdCache_ = {};
+    resetGoogleTaskQuotaCache_();
 
     if (mainSheet) {
       const col = findMainGoogleTaskIdColumn_(mainSheet);

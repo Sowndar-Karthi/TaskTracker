@@ -2,50 +2,31 @@
  * PROJECT TRACKER AUTOMATION 2026
  * Features: 
  * 1. Hourly Batched Email Replies on Status/Env/Blocker changes.
- *    - All edits within 1 hour are grouped into 1 reply per task thread.
+ * - All edits within 1 hour are grouped into 1 reply per task thread.
  * 2. Threading based on "Internal Mail Subject".
  * 3. Daily Summary Reports (6 AM / 6 PM).
  * 4. Gmail Label Management (Parent: "A Assessment" with nested status labels)
  * 5. Google Tasks sync (main task = parent, sub-tasks = children under parent)
- *    - Parent moves to the Google Task list matching main Status (column I)
- *    - Subtasks: skip ONLY when Status + Production matches Completed, Closed/Cancelled,
- *      Closed–Billable, or Closed–Not Proceeding; all other combos add (remove if skip applies)
- * 
- * SETUP INSTRUCTIONS:
+ * - Parent moves to the Google Task list matching main Status (column I)
+ * - Subtasks: skip ONLY when Status + Production matches Completed, Closed/Cancelled,
+ * Closed–Billable, or Closed–Not Proceeding; all other combos add (remove if skip applies)
+ * * SETUP INSTRUCTIONS:
  * 1. Go to Extensions > Apps Script
  * 2. Paste ALL .gs files into the same project (see FILE LAYOUT below)
  * 3. Run createAllStatusLabels() once manually to create all labels
  * 4. Google Tasks: add Services (+) > Google Tasks API once, then run
- *    setupAllTrackersComplete() — permissions (Allow popup) are requested automatically.
+ * setupAllTrackersComplete() — permissions (Allow popup) are requested automatically.
  * 5. Edit ProjectTrackerUserConfig.gs — your email, sheet tab names, BCC, labels
  * 6. Dev Tracker: column U = Gmail Thread ID, column V = Google Task ID
- *    Dev Tracker Sub: column V = Google Subtask ID, column W = Main Google Task ID,
- *    column X = Google Nest Status (optional — run refreshSubNestStatusColumn())
+ * Dev Tracker Sub: column V = Google Subtask ID, column W = Main Google Task ID,
+ * column X = Google Nest Status (optional — run refreshSubNestStatusColumn())
  * 7. Create Google Task lists with the same names as CONFIG.STATUS_LABELS
  * 8. Run verifyGoogleTaskLists() then syncAllGoogleTasksFromDevTracker() once
  * 9. Set up triggers: run setupAllTriggers() in ProjectTrackerTriggers.gs
- *
- * FILE LAYOUT:
- *   ProjectTrackerUserConfig.gs       — YOUR email, sheet names, BCC (edit this file)
- *   ProjectTracker.gs                  — column layout, Gmail labels, sheet helpers
- *   ProjectTrackerGoogleTasks.gs       — Google Tasks sync (main + sub, bulk, reset)
- *   ProjectTrackerNotifications.gs   — email, hourly batch, daily/weekly summaries
- *   ProjectTrackerTriggers.gs          — onEdit + time-driven trigger install
- *   ProjectTrackerTests.gs             — manual tests + Google Tasks test suite
- *   TestAllTrackers.gs                 — unified setup + full test suite
- *
- * Google Tasks setup: see ProjectTrackerGoogleTasks.gs — verifyGoogleTaskLists(),
- *   syncExistingTasksToGoogle(), getGoogleTasksLastSyncLog()
- *
- * BCC: Edit BCC_EMAILS in ProjectTrackerUserConfig.gs.
- *
- * USER VALUES: edit ProjectTrackerUserConfig.gs (email, tab names, parent label, batch interval).
- * CONFIG below: column numbers, status labels, Google Tasks tuning only.
  */
 
 const CONFIG = {
   // Dev Tracker columns (row 1 headers):
-  // … R=Internal Mail Subject, U=Gmail Thread ID, V=Google Task ID
   MAIN_PROJECT_COL: 1,        // Column A: Project Name
   MAIN_TASK_NAME_COL: 3,      // Column C: Task
   MAIN_ASSIGNED_COL: 5,       // Column E: Assigned to
@@ -59,7 +40,7 @@ const CONFIG = {
   MAIN_THREAD_ID_COL: 21,     // Column U: Gmail Thread ID (header resolved at runtime)
   MAIN_GOOGLE_TASK_ID_COL: 22, // Column V: Google Task ID (header resolved at runtime)
   
-  SUB_LINK_COL: 2,            // Column B: Main Task Name (must match Dev Tracker column C Task)
+  SUB_LINK_COL: 2,             // Column B: Main Task Name (must match Dev Tracker column C Task)
   SUB_TASK_NAME_COL: 4,       // Column D: Task
   SUB_ASSIGNED_COL: 8,        // Column H: Assigned to
   SUB_STATUS_COL: 9,          // Column I: Status
@@ -69,19 +50,16 @@ const CONFIG = {
   SUB_DEPENDENCY_COL: 16,     // Column P: Dependency Detail
   SUB_THREAD_ID_COL: 21,      // Column U: Gmail Thread ID (header resolved at runtime)
   SUB_GOOGLE_TASK_ID_COL: 22, // Column V: Google Subtask ID (header resolved at runtime)
-  /** Column W: Main Google Task ID — from Dev Tracker column V; column B is parent source of truth. */
-  SUB_PARENT_GOOGLE_TASK_ID_COL: 23,
-  /** Column X: Google Nest Status (OK / ORPHAN / WRONG PARENT — run refreshSubNestStatusColumn()). */
-  SUB_NEST_STATUS_COL: 24,
+  SUB_PARENT_GOOGLE_TASK_ID_COL: 23, // Column W: Main Google Task ID
+  SUB_NEST_STATUS_COL: 24,    // Column X: Google Nest Status
 
   // Main Dev Tracker — columns to monitor for batched email updates:
-  // I=Status, J=Env, M=Informed, N=Blocker, O=Dependency
   MONITORED_COLS: [9, 10, 13, 14, 15],
 
-  // Dev Tracker Sub — I=Status, J=Env, N=Informed, O=Blocker, P=Dependency; U/V/W/X = IDs + nest status
+  // Dev Tracker Sub — monitored columns:
   SUB_MONITORED_COLS: [9, 10, 14, 15, 16],
 
-  /** Status names — must match Google Task lists and Gmail labels under PARENT_LABEL in ProjectTrackerUserConfig.gs */
+  /** Status names — must match Google Task lists and Gmail labels */
   STATUS_LABELS: [
     'Pipeline / To Do',
     'Requirements Not Clear',
@@ -97,54 +75,35 @@ const CONFIG = {
     'Closed – Not Proceeding'
   ],
 
-  /** Delay between rows during bulk Google Tasks sync (ms). Lower = faster but closer to quota limits. */
+  /** Delay between rows during bulk Google Tasks sync (ms). */
   GOOGLE_TASKS_SYNC_SLEEP_MS: 50,
 
-  /**
-   * Max main OR sub rows per execution (one "batch"). 0 = no row limit (time limit only).
-   * Example: 300 → sync 300 subs, pause, auto-continue next 300 until done (safe for 2000–5000 subs).
-   */
+  /** Max main OR sub rows per execution (one "batch"). */
   GOOGLE_TASKS_SYNC_BATCH_SIZE: 300,
 
-  /**
-   * Stop each batch before Apps Script 6-minute hard timeout (ms). Default 4.5 min leaves save/trigger buffer.
-   */
+  /** Stop each batch before Apps Script 6-minute hard timeout (ms). */
   GOOGLE_TASKS_SYNC_MAX_RUNTIME_MS: 270000,
 
-  /**
-   * When a batch pauses, schedule continueGoogleTasksBulkSync_() automatically (~1 min later).
-   * Set false to continue manually with syncExistingTasksToGoogle().
-   */
+  /** Automatically reschedule continueGoogleTasksBulkSync_() when paused. */
   GOOGLE_TASKS_AUTO_CONTINUE_BULK: true,
 
-  /** Delay before auto-continue trigger fires (ms). Minimum ~60s for Apps Script time triggers. */
+  /** Delay before auto-continue trigger fires (ms). */
   GOOGLE_TASKS_AUTO_CONTINUE_DELAY_MS: 60000,
 
-  /**
-   * Dev Tracker Sub bulk scan order: bottom → row 2 (newest rows at bottom are processed first).
-   * Bulk sync order: Phase 1 all Dev Tracker mains, Phase 2 all subs (main tasks always parents).
-   */
+  /** Dev Tracker Sub bulk scan order: bottom → row 2 */
   SUB_SHEET_SCAN_BOTTOM_UP: true,
 
-  /**
-   * Bulk sync: skip Dev Tracker rows with empty column C and blank sub rows entirely
-   * (builds row lists — does not loop row 2…getLastRow()).
-   */
+  /** Bulk sync: skip blank rows entirely */
   GOOGLE_TASKS_SKIP_EMPTY_ROWS: true,
 
-  /**
-   * Main Status (column I) edit:
-   *   false — re-sync only sub rows linked to that main (TARGETED index, not full sheet loop)
-   *   true  — sync main Google Task only; subs update on sub-row edit or bulk sync (lightest)
-   */
+  /** Main Status edit re-sync tuning */
   GOOGLE_TASKS_LIGHT_MAIN_STATUS_EDIT: false,
 
-  /**
-   * Google Tasks subtask title suffix (sheet column D is unchanged — suffix is Google Tasks only).
-   *   'duplicate' — append [Main · #row] only when column D name appears on 2+ sub rows
-   *   'always'    — every subtask gets [Main · #row] (safest; avoids collision with main task names)
-   */
+  /** Google Tasks subtask title suffix configuration */
   GOOGLE_TASKS_SUBTASK_TITLE_SUFFIX: 'duplicate',
+
+  /** When false, Google Tasks sync creates/updates Dev Tracker main tasks only */
+  GOOGLE_TASKS_SYNC_SUBTASKS: true,
 
   /** Fallback background when status label is unknown / custom. */
   STATUS_COLOR_UNKNOWN: '#f0f0f0'
@@ -155,9 +114,7 @@ const CONFIG = {
  * @returns {string[]}
  */
 function parseTrackerBccEmails_(raw) {
-  if (!raw) {
-    return [];
-  }
+  if (!raw) return [];
   if (Array.isArray(raw)) {
     return raw.map(function (s) { return (s || '').toString().trim(); })
       .filter(function (s) { return s !== ''; });
@@ -169,37 +126,22 @@ function parseTrackerBccEmails_(raw) {
 }
 
 /** @returns {string} */
-function getMainSheetName_() {
-  return (TRACKER_USER_CONFIG.MAIN_SHEET || '').toString().trim();
-}
-
+function getMainSheetName_() { return (TRACKER_USER_CONFIG.MAIN_SHEET || '').toString().trim(); }
 /** @returns {string} */
-function getSubSheetName_() {
-  return (TRACKER_USER_CONFIG.SUB_SHEET || '').toString().trim();
-}
-
+function getSubSheetName_() { return (TRACKER_USER_CONFIG.SUB_SHEET || '').toString().trim(); }
 /** @returns {string} */
-function getPendingSheetName_() {
-  return (TRACKER_USER_CONFIG.PENDING_SHEET || '').toString().trim();
-}
-
+function getPendingSheetName_() { return (TRACKER_USER_CONFIG.PENDING_SHEET || '').toString().trim(); }
 /** @returns {string} */
-function getCompletedSheetName_() {
-  return (TRACKER_USER_CONFIG.COMPLETED_SHEET || '').toString().trim();
-}
-
+function getCompletedSheetName_() { return (TRACKER_USER_CONFIG.COMPLETED_SHEET || '').toString().trim(); }
 /** @returns {string} */
-function getParentLabelName_() {
-  return (TRACKER_USER_CONFIG.PARENT_LABEL || '').toString().trim();
-}
+function getParentLabelName_() { return (TRACKER_USER_CONFIG.PARENT_LABEL || '').toString().trim(); }
 
 /**
  * @param {string} sheetName
  * @returns {boolean}
  */
 function isMainTrackerSheetName_(sheetName) {
-  return (sheetName || '').toString().trim().toLowerCase() ===
-    getMainSheetName_().toLowerCase();
+  return (sheetName || '').toString().trim().toLowerCase() === getMainSheetName_().toLowerCase();
 }
 
 /**
@@ -207,76 +149,49 @@ function isMainTrackerSheetName_(sheetName) {
  * @returns {boolean}
  */
 function isSubTrackerSheetName_(sheetName) {
-  return (sheetName || '').toString().trim().toLowerCase() ===
-    getSubSheetName_().toLowerCase();
+  return (sheetName || '').toString().trim().toLowerCase() === getSubSheetName_().toLowerCase();
 }
 
-/**
- * Script property keys for optional overrides (advanced). Normal edits: ProjectTrackerUserConfig.gs
- */
 const SCRIPT_PROP_PROJECT_MY_EMAIL = "PROJECT_MY_EMAIL";
 const SCRIPT_PROP_PROJECT_BCC_EMAILS = "PROJECT_BCC_EMAILS";
 const SCRIPT_PROP_PROJECT_BATCH_INTERVAL_HOURS = "PROJECT_BATCH_INTERVAL_HOURS";
-
-/** Whole-hour intervals Apps Script accepts for newTrigger().everyHours(). */
 const ALLOWED_BATCH_INTERVAL_HOURS = [1, 2, 4, 6, 8, 12];
 
 /**
  * Resolves the hourly batch interval.
- *   1. Script property PROJECT_BATCH_INTERVAL_HOURS (if set)
- *   2. TRACKER_USER_CONFIG.BATCH_INTERVAL_HOURS
- *   3. Falls back to 1 when not one of 1, 2, 4, 6, 8, 12
  * @returns {number}
  */
 function getBatchIntervalHours_() {
   let value = parseInt(TRACKER_USER_CONFIG.BATCH_INTERVAL_HOURS, 10) || 1;
-
   try {
-    const raw = PropertiesService
-      .getScriptProperties()
-      .getProperty(SCRIPT_PROP_PROJECT_BATCH_INTERVAL_HOURS);
+    const raw = PropertiesService.getScriptProperties().getProperty(SCRIPT_PROP_PROJECT_BATCH_INTERVAL_HOURS);
     if (raw && raw.toString().trim() !== '') {
       const parsed = parseInt(raw.toString().trim(), 10);
-      if (!isNaN(parsed) && parsed > 0) {
-        value = parsed;
-      }
-    }
-  } catch (e) {
-    // Fall through to CONFIG default
-  }
-
-  if (ALLOWED_BATCH_INTERVAL_HOURS.indexOf(value) === -1) {
-    Logger.log(
-      'BATCH_INTERVAL_HOURS=' + value + ' is not allowed by Apps Script ' +
-      '(must be one of ' + ALLOWED_BATCH_INTERVAL_HOURS.join(', ') + '). ' +
-      'Falling back to 1 hour.'
-    );
-    return 1;
-  }
-
-  return value;
-}
-
-/**
- * Primary sender: script property → ProjectTrackerUserConfig.gs → active Google account.
- * @returns {string}
- */
-function getProjectMyEmail_() {
-  try {
-    const raw = PropertiesService
-      .getScriptProperties()
-      .getProperty(SCRIPT_PROP_PROJECT_MY_EMAIL);
-    if (raw && raw.toString().trim() !== '') {
-      return raw.toString().trim();
+      if (!isNaN(parsed) && parsed > 0) value = parsed;
     }
   } catch (e) {
     // Fall through
   }
 
-  const configured = (TRACKER_USER_CONFIG.MY_EMAIL || '').toString().trim();
-  if (configured) {
-    return configured;
+  if (ALLOWED_BATCH_INTERVAL_HOURS.indexOf(value) === -1) {
+    Logger.log('BATCH_INTERVAL_HOURS=' + value + ' is not allowed. Falling back to 1 hour.');
+    return 1;
   }
+  return value;
+}
+
+/**
+ * Primary sender configuration resolution.
+ * @returns {string}
+ */
+function getProjectMyEmail_() {
+  try {
+    const raw = PropertiesService.getScriptProperties().getProperty(SCRIPT_PROP_PROJECT_MY_EMAIL);
+    if (raw && raw.toString().trim() !== '') return raw.toString().trim();
+  } catch (e) {}
+
+  const configured = (TRACKER_USER_CONFIG.MY_EMAIL || '').toString().trim();
+  if (configured) return configured;
 
   try {
     return Session.getActiveUser().getEmail();
@@ -287,142 +202,98 @@ function getProjectMyEmail_() {
 }
 
 /**
- * BCC list: script property → ProjectTrackerUserConfig.gs → none.
+ * BCC list configuration resolution.
  * @returns {string[]}
  */
 function getProjectBccEmails_() {
   try {
-    const raw = PropertiesService
-      .getScriptProperties()
-      .getProperty(SCRIPT_PROP_PROJECT_BCC_EMAILS);
+    const raw = PropertiesService.getScriptProperties().getProperty(SCRIPT_PROP_PROJECT_BCC_EMAILS);
     if (raw && raw.toString().trim() !== '') {
       const parsed = parseTrackerBccEmails_(raw);
-      if (parsed.length > 0) {
-        return parsed;
-      }
+      if (parsed.length > 0) return parsed;
     }
-  } catch (e) {
-    // Fall through
-  }
-
+  } catch (e) {}
   return parseTrackerBccEmails_(TRACKER_USER_CONFIG.BCC_EMAILS);
 }
 
 /**
- * Active spreadsheet, or the bound tracker ID saved by setupAllTrackers().
+ * Active spreadsheet workbook retrieval.
  * @returns {GoogleAppsScript.Spreadsheet.Spreadsheet|null}
  */
 function getTrackerSpreadsheet_() {
   try {
     const active = SpreadsheetApp.getActiveSpreadsheet();
-    if (active) {
-      return active;
-    }
-  } catch (e) {
-    // Fall through to script property
-  }
+    if (active) return active;
+  } catch (e) {}
 
   try {
     const id = PropertiesService.getScriptProperties().getProperty('LEAVE_TRACKER_SPREADSHEET_ID');
-    if (id && id.toString().trim() !== '') {
-      return SpreadsheetApp.openById(id.toString().trim());
-    }
+    if (id && id.toString().trim() !== '') return SpreadsheetApp.openById(id.toString().trim());
   } catch (error) {
     Logger.log('getTrackerSpreadsheet_ Error: ' + error.toString());
   }
-
   return null;
 }
 
 /**
- * Resolves the Dev Tracker sheet (exact name, then case-insensitive trim match).
+ * Resolves the Dev Tracker main sheet.
  * @returns {GoogleAppsScript.Spreadsheet.Sheet|null}
  */
 function getMainTrackerSheet_() {
   const ss = getTrackerSpreadsheet_();
   if (!ss) {
-    Logger.log(
-      'No spreadsheet open. Open your Project Tracker Google Sheet in the browser, then run again.'
-    );
+    Logger.log('No spreadsheet open. Open your Project Tracker Google Sheet and try again.');
     return null;
   }
 
   const exact = ss.getSheetByName(getMainSheetName_());
-  if (exact) {
-    return exact;
-  }
+  if (exact) return exact;
 
   const target = getMainSheetName_().trim().toLowerCase();
   const sheets = ss.getSheets();
   for (let i = 0; i < sheets.length; i++) {
     const name = (sheets[i].getName() || '').toString().trim();
-    if (name.toLowerCase() === target) {
-      Logger.log('Dev Tracker sheet matched: "' + name + '"');
-      return sheets[i];
-    }
+    if (name.toLowerCase() === target) return sheets[i];
   }
-
-  const names = [];
-  for (let j = 0; j < sheets.length; j++) {
-    names.push('"' + sheets[j].getName() + '"');
-  }
-  Logger.log(
-    'Sheet "' + getMainSheetName_() + '" not found. Tabs in this file: ' + names.join(', ')
-  );
   return null;
 }
 
 /**
+ * Resolves the Dev Tracker sub sheet.
  * @returns {GoogleAppsScript.Spreadsheet.Sheet|null}
  */
 function getSubTrackerSheet_() {
   const ss = getTrackerSpreadsheet_();
-  if (!ss) {
-    return null;
-  }
+  if (!ss) return null;
 
   const exact = ss.getSheetByName(getSubSheetName_());
-  if (exact) {
-    return exact;
-  }
+  if (exact) return exact;
 
   const target = getSubSheetName_().trim().toLowerCase();
   const sheets = ss.getSheets();
   for (let i = 0; i < sheets.length; i++) {
     const name = (sheets[i].getName() || '').toString().trim();
-    if (name.toLowerCase() === target) {
-      return sheets[i];
-    }
+    if (name.toLowerCase() === target) return sheets[i];
   }
   return null;
 }
 
-/** Column caches (projectThreadIdColCache_, projectGoogle*ColCache_) live in ProjectTrackerGoogleTasks.gs. */
-
 /**
- * Finds "Gmail Thread ID" / "Thread ID" column from row 1, else column U (21).
+ * Finds "Gmail Thread ID" / "Thread ID" column from row 1.
  * @param {GoogleAppsScript.Spreadsheet.Sheet} mainSheet
  * @returns {number}
  */
 function findProjectThreadIdColumn_(mainSheet) {
   ensureColumnCachesFresh_(mainSheet, null);
-  if (projectThreadIdColCache_) {
-    return projectThreadIdColCache_;
-  }
-  if (!mainSheet) {
-    return CONFIG.MAIN_THREAD_ID_COL;
-  }
+  if (projectThreadIdColCache_) return projectThreadIdColCache_;
+  if (!mainSheet) return CONFIG.MAIN_THREAD_ID_COL;
+
   const lastCol = mainSheet.getLastColumn();
   const headers = mainSheet.getRange(1, 1, 1, lastCol).getValues()[0];
   for (let c = 0; c < headers.length; c++) {
     const h = (headers[c] || '').toString().toLowerCase().trim();
-    if (
-      h.indexOf('gmail thread') >= 0 ||
-      h === 'thread id' ||
-      h.indexOf('thread id') >= 0
-    ) {
+    if (h.indexOf('gmail thread') >= 0 || h === 'thread id' || h.indexOf('thread id') >= 0) {
       projectThreadIdColCache_ = c + 1;
-      Logger.log('Thread ID column from header: ' + projectThreadIdColCache_ + ' ("' + headers[c] + '")');
       return projectThreadIdColCache_;
     }
   }
@@ -451,33 +322,26 @@ function setProjectThreadIdForRow_(mainSheet, row, threadId) {
 }
 
 /**
- * Run from Apps Script to debug one row (column U vs header, reply vs new thread).
- * @param {number} row Defaults to 2
+ * Automatically archives completed tasks into a historical Completed log sheet.
  */
 function moveMainRowToCompletedTrackerIfNeeded_(mainSheet, row) {
   const lock = LockService.getDocumentLock();
   if (!lock.tryLock(5000)) return;
-
   const props = PropertiesService.getDocumentProperties();
   const guardKey = 'MOVE_TO_COMPLETED_IN_PROGRESS';
   try {
     if (props.getProperty(guardKey) === '1') return;
-
     const status = (mainSheet.getRange(row, CONFIG.MAIN_STATUS_COL).getValue() || '').toString().trim();
     if (!isCompletedOrClosedStatus_(status)) return;
 
     props.setProperty(guardKey, '1');
 
     const subject = (mainSheet.getRange(row, CONFIG.MAIN_SUBJECT_COL).getValue() || '').toString().trim();
-    if (subject) {
-      purgePendingChangesForSubject_(subject);
-    }
+    if (subject) purgePendingChangesForSubject_(subject);
 
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     let completedSheet = ss.getSheetByName(getCompletedSheetName_());
-    if (!completedSheet) {
-      completedSheet = ss.insertSheet(getCompletedSheetName_());
-    }
+    if (!completedSheet) completedSheet = ss.insertSheet(getCompletedSheetName_());
 
     const lastCol = mainSheet.getLastColumn();
     const header = mainSheet.getRange(1, 1, 1, lastCol).getValues();
@@ -485,10 +349,7 @@ function moveMainRowToCompletedTrackerIfNeeded_(mainSheet, row) {
     const targetCols = lastCol + 1;
     const headerWithMovedAt = [header[0].slice().concat([movedAtHeader])];
 
-    if (completedSheet.getLastRow() === 0) {
-      completedSheet.getRange(1, 1, 1, targetCols).setValues(headerWithMovedAt);
-      completedSheet.setFrozenRows(1);
-    } else if (completedSheet.getLastRow() === 1 && completedSheet.getLastColumn() === 1 && completedSheet.getRange(1, 1).getValue() === '') {
+    if (completedSheet.getLastRow() === 0 || (completedSheet.getLastRow() === 1 && completedSheet.getLastColumn() === 1 && completedSheet.getRange(1, 1).getValue() === '')) {
       completedSheet.getRange(1, 1, 1, targetCols).setValues(headerWithMovedAt);
       completedSheet.setFrozenRows(1);
     }
@@ -504,17 +365,13 @@ function moveMainRowToCompletedTrackerIfNeeded_(mainSheet, row) {
     const sourceTaskName = (rowValues[taskNameIdx] || '').toString().trim();
     const writtenTaskName = (written[taskNameIdx] || '').toString().trim();
     if (sourceTaskName && writtenTaskName !== sourceTaskName) {
-      throw new Error(
-        'Append verification failed for Dev Tracker row ' + row +
-        ' — row not deleted from main sheet.'
-      );
+      throw new Error('Append verification failed for Dev Tracker row ' + row + ' — row not deleted.');
     }
 
     const parentGoogleTaskId = (rowValues[CONFIG.MAIN_GOOGLE_TASK_ID_COL - 1] || '').toString().trim();
     fillSubParentGoogleTaskIdForLinkedSubsIfEmpty_(sourceTaskName, parentGoogleTaskId);
 
     mainSheet.deleteRow(row);
-
     Logger.log('Moved row ' + row + ' to "' + getCompletedSheetName_() + '" due to status: ' + status);
   } catch (error) {
     Logger.log('moveMainRowToCompletedTrackerIfNeeded_ Error: ' + error.toString());
@@ -523,7 +380,6 @@ function moveMainRowToCompletedTrackerIfNeeded_(mainSheet, row) {
     try { lock.releaseLock(); } catch (e) {}
   }
 }
-
 
 function purgePendingChangesForSubject_(subject) {
   try {
@@ -534,15 +390,12 @@ function purgePendingChangesForSubject_(subject) {
 
     const values = pendingSheet.getDataRange().getValues();
     if (values.length <= 1) return;
-
     const toDelete = [];
     for (let i = 1; i < values.length; i++) {
       if ((values[i][1] || '').toString().trim() === subject.toString().trim()) {
-        toDelete.push(i + 1); // sheet row number
+        toDelete.push(i + 1);
       }
     }
-
-    // delete bottom-up to preserve indices
     for (let i = toDelete.length - 1; i >= 0; i--) {
       pendingSheet.deleteRow(toDelete[i]);
     }
@@ -553,7 +406,6 @@ function purgePendingChangesForSubject_(subject) {
 
 /**
  * HELPER: Immediately sync Gmail labels for an existing main thread
- * Triggered on main sheet Status edits so label add/remove is automatic.
  */
 function updateLabelsForMainRow(mainSheet, row) {
   try {
@@ -594,9 +446,7 @@ function getGmailUserLabelMap_() {
  * @returns {GmailLabel}
  */
 function getOrCreateGmailLabel_(labelName, labelMap) {
-  if (labelMap[labelName]) {
-    return labelMap[labelName];
-  }
+  if (labelMap[labelName]) return labelMap[labelName];
   const created = GmailApp.createLabel(labelName);
   labelMap[labelName] = created;
   Logger.log('Created Gmail label: ' + labelName);
@@ -604,8 +454,8 @@ function getOrCreateGmailLabel_(labelName, labelMap) {
 }
 
 /**
- * NEW FUNCTION: Manage Gmail labels with parent/child structure
- * Removes old status labels and adds new status label under "A Assessment"
+ * BEST PRACTICE OPTIMIZATION: Manage Gmail labels with parent/child structure.
+ * Inspects what labels are dynamically present on the thread first to avoid wasteful API calls.
  */
 function manageThreadLabels(threadId, newStatus) {
   try {
@@ -621,29 +471,39 @@ function manageThreadLabels(threadId, newStatus) {
     }
     
     const labelMap = getGmailUserLabelMap_();
-    
     const parentLabelName = getParentLabelName_();
+    const newStatusName = (newStatus || '').toString().trim();
+    const targetNestedLabelName = newStatusName ? parentLabelName + '/' + newStatusName : '';
 
-    // STEP 1: Remove all existing status labels (children of parent label)
-    CONFIG.STATUS_LABELS.forEach(function(statusName) {
+    // Performance Guard: Fetch current thread labels to avoid wasteful API executions
+    const threadLabels = thread.getLabels();
+    const currentThreadLabelNames = threadLabels.map(function (l) { return l.getName(); });
+
+    // STEP 1: Remove old status labels ONLY if present on the thread (never remove the target label)
+    CONFIG.STATUS_LABELS.forEach(function (statusName) {
       const nestedLabelName = parentLabelName + '/' + statusName;
-      if (labelMap[nestedLabelName]) {
+      if (targetNestedLabelName && nestedLabelName === targetNestedLabelName) {
+        return;
+      }
+      if (currentThreadLabelNames.indexOf(nestedLabelName) !== -1 && labelMap[nestedLabelName]) {
         thread.removeLabel(labelMap[nestedLabelName]);
         Logger.log('Removed old nested label: ' + nestedLabelName);
       }
     });
-    
-    // STEP 2: Add the parent label if not already present
-    const parentLabel = getOrCreateGmailLabel_(parentLabelName, labelMap);
-    thread.addLabel(parentLabel);
-    
-    // STEP 3: Add new status label (nested under parent)
-    if (newStatus && newStatus.toString().trim() !== "") {
-      const newStatusName = newStatus.toString().trim();
-      const nestedLabelName = parentLabelName + '/' + newStatusName;
-      const newLabel = getOrCreateGmailLabel_(nestedLabelName, labelMap);
-      thread.addLabel(newLabel);
-      Logger.log('Added new nested label: ' + nestedLabelName);
+
+    // STEP 2: Add parent label if not already present on the thread
+    if (currentThreadLabelNames.indexOf(parentLabelName) === -1) {
+      const parentLabel = getOrCreateGmailLabel_(parentLabelName, labelMap);
+      thread.addLabel(parentLabel);
+    }
+
+    // STEP 3: Add the updated nested status label
+    if (newStatusName) {
+      if (currentThreadLabelNames.indexOf(targetNestedLabelName) === -1) {
+        const newLabel = getOrCreateGmailLabel_(targetNestedLabelName, labelMap);
+        thread.addLabel(newLabel);
+        Logger.log('Added new nested label: ' + targetNestedLabelName);
+      }
     }
     
   } catch (error) {
@@ -656,33 +516,31 @@ function manageThreadLabels(threadId, newStatus) {
  */
 function createAllStatusLabels() {
   try {
-    // Get all existing labels
     const allLabels = GmailApp.getUserLabels();
     const labelMap = {};
     allLabels.forEach(function(label) {
       labelMap[label.getName()] = label;
     });
-    
     const parentLabelName = getParentLabelName_();
 
     // Create parent label
     if (!labelMap[parentLabelName]) {
-      GmailApp.createLabel(parentLabelName);
+      const createdParent = GmailApp.createLabel(parentLabelName);
+      labelMap[parentLabelName] = createdParent;
       Logger.log('Created parent label: ' + parentLabelName);
     }
     
-    // Create all nested labels
+    // Create nested labels and dynamically build local dictionary reference
     CONFIG.STATUS_LABELS.forEach(function(statusName) {
       const nestedLabelName = parentLabelName + '/' + statusName;
       if (!labelMap[nestedLabelName]) {
-        GmailApp.createLabel(nestedLabelName);
+        const createdNested = GmailApp.createLabel(nestedLabelName);
+        labelMap[nestedLabelName] = createdNested;
         Logger.log('Created nested label: ' + nestedLabelName);
       }
     });
-    
     Logger.log('✅ All status labels created successfully!');
-    Logger.log('Total labels created: ' + (CONFIG.STATUS_LABELS.length + 1));
-    
+    Logger.log('Total labels verified/created: ' + (CONFIG.STATUS_LABELS.length + 1));
   } catch (error) {
     Logger.log('createAllStatusLabels Error: ' + error.toString());
   }

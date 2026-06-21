@@ -119,6 +119,10 @@ const SCRIPT_PROP_LEAVE_BCC_EMAILS = "LEAVE_BCC_EMAILS";
 const LEAVE_EDIT_DEBOUNCE_SECONDS = 30;
 const PROP_LEAVE_REPORT_PENDING = "LEAVE_REPORT_PENDING";
 const PROP_LEAVE_REPORT_SCHEDULED_AT = "LEAVE_REPORT_SCHEDULED_AT";
+/** First calendar day (yyyy-MM-dd) with no summary rows and no validation errors. */
+const PROP_LEAVE_EMPTY_REPORT_SINCE = "LEAVE_EMPTY_REPORT_SINCE";
+/** Skip empty leave report emails after this many calendar days with nothing to report. */
+const LEAVE_EMPTY_REPORT_SKIP_AFTER_DAYS = 2;
 const LEAVE_DEFERRED_TRIGGER_HANDLER = "processPendingLeaveReport";
 
 const LEAVE_TRIGGER_HANDLERS = [
@@ -389,6 +393,76 @@ function processPendingLeaveReport() {
  * MAIN REPORT FUNCTION
  ************************************************************/
 
+/**
+ * @param {Date} [date]
+ * @returns {string} yyyy-MM-dd in script timezone
+ */
+function getLeaveReportDateKey_(date) {
+  return Utilities.formatDate(
+    date || new Date(),
+    Session.getScriptTimeZone(),
+    "yyyy-MM-dd"
+  );
+}
+
+/**
+ * @param {string} startKey yyyy-MM-dd
+ * @param {string} endKey yyyy-MM-dd
+ * @returns {number}
+ */
+function getCalendarDaysBetweenKeys_(startKey, endKey) {
+  const start = new Date(startKey + "T12:00:00");
+  const end = new Date(endKey + "T12:00:00");
+  return Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+/**
+ * Decides whether to send the leave email when the summary table would be empty.
+ * Still sends when there are validation errors (actionable rows).
+ * After LEAVE_EMPTY_REPORT_SKIP_AFTER_DAYS calendar days with no matches, skips email.
+ * @param {Object[]} filteredRows
+ * @param {Object[]} validationErrors
+ * @param {Date} today
+ * @returns {boolean}
+ */
+function shouldSendLeaveReportEmail_(filteredRows, validationErrors, today) {
+  const hasSummary = !!(filteredRows && filteredRows.length > 0);
+  const hasErrors = !!(validationErrors && validationErrors.length > 0);
+
+  if (hasSummary || hasErrors) {
+    PropertiesService.getScriptProperties().deleteProperty(PROP_LEAVE_EMPTY_REPORT_SINCE);
+    return true;
+  }
+
+  const props = PropertiesService.getScriptProperties();
+  const todayKey = getLeaveReportDateKey_(today);
+  let emptySince = props.getProperty(PROP_LEAVE_EMPTY_REPORT_SINCE);
+
+  if (!emptySince) {
+    props.setProperty(PROP_LEAVE_EMPTY_REPORT_SINCE, todayKey);
+    Logger.log(
+      "Leave report: no valid entries — sending empty notice (day 1 of " +
+        LEAVE_EMPTY_REPORT_SKIP_AFTER_DAYS + ")."
+    );
+    return true;
+  }
+
+  const daysEmpty = getCalendarDaysBetweenKeys_(emptySince, todayKey);
+  if (daysEmpty >= LEAVE_EMPTY_REPORT_SKIP_AFTER_DAYS) {
+    Logger.log(
+      "Leave report skipped — no valid leave entries for " + daysEmpty +
+      " calendar day(s) (threshold " + LEAVE_EMPTY_REPORT_SKIP_AFTER_DAYS + ")."
+    );
+    return false;
+  }
+
+  Logger.log(
+    "Leave report: no valid entries — sending empty notice (empty day " +
+      (daysEmpty + 1) + " of " + LEAVE_EMPTY_REPORT_SKIP_AFTER_DAYS + ")."
+  );
+  return true;
+}
+
 function sendDailyLeaveReport() {
 
   try {
@@ -411,6 +485,10 @@ function sendDailyLeaveReport() {
       cols,
       today
     );
+
+    if (!shouldSendLeaveReportEmail_(report.filteredRows, report.validationErrors, today)) {
+      return;
+    }
 
     const html = buildResponsiveTemplate(
       report.filteredRows,
