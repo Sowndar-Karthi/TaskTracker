@@ -1,0 +1,443 @@
+# Google Apps Script — Project Development Rules
+
+You are an expert Google Apps Script (GAS) architect and senior developer working on this project. Follow every rule below when writing, reviewing, refactoring, or planning code changes.
+
+---
+
+## 1. Tech Stack & Environment Architecture
+
+### Platform Constraints
+- All code **must** comply with Google Apps Script runtime limits, quotas, and APIs.
+- Do **not** use ES module syntax (`import` / `export`). GAS does not support native modules.
+- Do **not** assume Node.js, npm packages, or browser-only APIs unless explicitly enabled and available in this project (e.g., V8 runtime features).
+
+### Global Namespace Pattern
+Simulate modules using global namespace objects to prevent variable collisions:
+
+```javascript
+// ✅ GOOD — namespaced module
+const NotificationModule = (function () {
+  'use strict';
+
+  function send_(recipient, message) {
+    // ...
+  }
+
+  return {
+    send: send_,
+  };
+})();
+
+// ❌ BAD — loose globals
+function sendNotification() { /* ... */ }
+var config = {};
+```
+
+### Namespace Rules
+- One primary namespace object per `.gs` file (e.g., `TriggerManager`, `SpreadsheetUtils`, `NotificationService`).
+- Prefix private/internal helpers with `_` when exposed on a namespace (e.g., `parseRow_`).
+- Never pollute the global scope with unscoped `const`, `let`, or `function` declarations unless they are documented entry points (e.g., `setupApp`, `doGet`).
+
+---
+
+## 2. Installable Triggers (Permission Optimization)
+
+### Never Rely on Simple Triggers for Shared Automation
+- **Do not** use Simple Triggers (`onOpen`, `onEdit`, `onChange`, `onFormSubmit`) as the primary automation mechanism for multi-user spreadsheets.
+- Simple Triggers run with limited authority and can prompt permission dialogs for other users.
+
+### Use Programmatic Installable Triggers
+Create triggers via `ScriptApp.newTrigger()` so execution runs under the authority of the user who ran setup:
+
+```javascript
+const TriggerManager = (function () {
+  'use strict';
+
+  const TRIGGER_HANDLERS = {
+  EDIT: 'handleSpreadsheetEdit_',
+  CHANGE: 'handleSpreadsheetChange_',
+  };
+
+  function createSpreadsheetEditTrigger_(spreadsheetId) {
+    ScriptApp.newTrigger(TRIGGER_HANDLERS.EDIT)
+      .forSpreadsheet(spreadsheetId)
+      .onEdit()
+      .create();
+  }
+
+  function removeAllProjectTriggers_() {
+    ScriptApp.getProjectTriggers().forEach(function (trigger) {
+      ScriptApp.deleteTrigger(trigger);
+    });
+  }
+
+  return {
+    initializeTriggers: function () {
+      removeAllProjectTriggers_();
+      createSpreadsheetEditTrigger_(SpreadsheetApp.getActiveSpreadsheet().getId());
+    },
+    removeAllTriggers: removeAllProjectTriggers_,
+  };
+})();
+```
+
+### Required Setup Entry Point
+Every project that uses triggers **must** expose an explicit admin-run setup function:
+
+```javascript
+/**
+ * Run once by a project admin to install all installable triggers.
+ * Safe to re-run; should be idempotent (remove old triggers, recreate fresh).
+ */
+function setupApp() {
+  TriggerManager.initializeTriggers();
+}
+```
+
+Alternate acceptable name: `initializeTriggers()`.
+
+### Trigger Handler Rules
+- Handler function names must be stable strings referenced by `ScriptApp.newTrigger('handlerName')`.
+- Document which triggers are created, which events they listen to, and which spreadsheet/document they target.
+- `setupApp()` must be **idempotent**: deleting existing project triggers before recreating them is preferred.
+
+---
+
+## 3. Isolated Testing Environment for Triggers
+
+### Strict Production vs. Testing Separation
+Never let test triggers or test code paths modify live production data.
+
+### Configuration Source (pick one, be consistent)
+Use **one** of these approaches project-wide:
+
+| Approach | Example |
+|----------|---------|
+| Script Properties | `PropertiesService.getScriptProperties().getProperty('ENV')` |
+| Dedicated config file | `const AppConfig = { IS_TESTING: false, ... }` |
+| Named constants block | `const IS_TESTING = false;` at top of `Config.gs` |
+
+### Required Config Shape
+```javascript
+const AppConfig = (function () {
+  'use strict';
+
+  const IS_TESTING = false;
+  const PRODUCTION_SPREADSHEET_ID = 'abc123';
+  const TEST_SPREADSHEET_ID = 'xyz789';
+
+  function getActiveSpreadsheetId_() {
+    return IS_TESTING ? TEST_SPREADSHEET_ID : PRODUCTION_SPREADSHEET_ID;
+  }
+
+  return {
+    isTesting: function () { return IS_TESTING; },
+    getSpreadsheetId: getActiveSpreadsheetId_,
+  };
+})();
+```
+
+### Testing Rules
+- Testing triggers must target the **test spreadsheet ID** or sandboxed mock data only.
+- Branch all trigger logic early:
+  ```javascript
+  function handleSpreadsheetEdit_(e) {
+    if (AppConfig.isTesting()) {
+      return handleSpreadsheetEditTest_(e);
+    }
+    return handleSpreadsheetEditProduction_(e);
+  }
+  ```
+- Provide a separate `setupTestTriggers()` or a `setupApp({ mode: 'test' })` option when test triggers are needed.
+- Log the active environment at the start of setup: `Logger.log('setupApp running in: ' + (AppConfig.isTesting() ? 'TEST' : 'PRODUCTION'));`
+
+---
+
+## 4. File Naming Conventions
+
+### Naming Standards
+- Use **PascalCase** for `.gs` file names: `TriggerManager.gs`, `NotificationService.gs`, `SpreadsheetUtils.gs`.
+- File names must describe **exactly one responsibility**.
+- Apply consistent casing across the entire project.
+
+### Allowed Examples
+| File | Purpose |
+|------|---------|
+| `TriggerManager.gs` | Create, list, delete installable triggers |
+| `NotificationService.gs` | Send notifications (email, chat, etc.) |
+| `SpreadsheetUtils.gs` | Reusable spreadsheet read/write helpers |
+| `AppConfig.gs` | Environment flags, IDs, constants |
+| `Setup.gs` | `setupApp()` and initialization entry points |
+
+### Forbidden Names
+Do **not** use vague names:
+- `utils.gs`, `helpers.gs`, `code.gs`, `script.gs`, `main.gs`, `temp.gs`, `misc.gs`
+
+If a helper is domain-specific, name it after the domain: `NotificationTemplates.gs`, not `utils.gs`.
+
+---
+
+## 5. Component Design & Reusability
+
+### DRY Principle
+- Extract repeated logic into reusable namespace modules.
+- Prefer composition: small, focused modules called by feature-specific orchestrators.
+
+### Impact Assessment (Required Before New Code)
+Before adding or modifying any component, **scan the existing codebase** and answer:
+
+1. Does similar functionality already exist? → **Reuse or extend** it.
+2. Will this change break existing callers? → Maintain **backward compatibility**.
+3. Does this duplicate a module's responsibility? → **Merge** instead of creating a parallel file.
+4. Does this introduce a new global or trigger handler? → Check for **naming collisions**.
+
+### Extension Over Duplication
+```javascript
+// ✅ GOOD — extend existing utility
+SpreadsheetUtils.getRowValues(sheet, rowIndex);
+
+// ❌ BAD — duplicate read logic in a feature file
+const values = sheet.getRange(rowIndex, 1, 1, sheet.getLastColumn()).getValues();
+```
+
+### Public API Stability
+- When modifying an existing namespace's public methods, preserve existing signatures.
+- If a breaking change is unavoidable, add a deprecated wrapper and document the migration path in a code comment.
+
+---
+
+## 6. Feature Architecture & Domain-Driven Grouping
+
+### One Feature, One Domain Folder or Prefix
+New features must be isolated by domain. All related files share a functional prefix/namespace:
+
+```
+NotificationService.gs
+NotificationTemplates.gs
+NotificationTriggers.gs   (if trigger wiring is feature-specific)
+```
+
+### Do Not Scatter Feature Logic
+- Notification formatting must **not** live inside `SpreadsheetUtils.gs`.
+- Trigger creation for a feature should live in `TriggerManager.gs` (central) or `FeatureTriggers.gs` (feature-scoped), never inline in unrelated handlers.
+
+### Feature Module Template
+```javascript
+const OrderProcessingModule = (function () {
+  'use strict';
+
+  // --- private helpers ---
+  function validateOrder_(order) { /* ... */ }
+
+  // --- public API ---
+  function processOrder(order) {
+    if (!order) {
+      console.error('OrderProcessingModule.processOrder: order is null/undefined');
+      return { success: false, error: 'Invalid order' };
+    }
+    try {
+      validateOrder_(order);
+      // ...
+      return { success: true };
+    } catch (err) {
+      console.error('OrderProcessingModule.processOrder failed', { order: order, error: err });
+      return { success: false, error: String(err) };
+    }
+  }
+
+  return { processOrder: processOrder };
+})();
+```
+
+### Cross-Feature Communication
+- Features communicate through explicit public namespace methods, not by reaching into another module's private helpers.
+- Shared infrastructure (config, logging, spreadsheet I/O) belongs in dedicated utility modules.
+
+---
+
+## 7. Robustness, Null Checks & Error Handling (Critical)
+
+### Defensive Programming — Mandatory
+Every function must validate inputs before use:
+
+```javascript
+function getCellValue(sheet, row, col) {
+  if (!sheet) {
+    console.error('getCellValue: sheet is null/undefined');
+    return '';
+  }
+  if (typeof row !== 'number' || row < 1 || typeof col !== 'number' || col < 1) {
+    console.error('getCellValue: invalid row/col', { row: row, col: col });
+    return '';
+  }
+  try {
+    return sheet.getRange(row, col).getValue() ?? '';
+  } catch (err) {
+    console.error('getCellValue: read failed', { row: row, col: col, error: err });
+    return '';
+  }
+}
+```
+
+### Validation Checklist
+Before accessing any value, check for:
+- `null` / `undefined`
+- Empty strings, empty arrays, empty objects (when emptiness is invalid)
+- Missing object properties (`obj && obj.prop`)
+- Invalid event objects in trigger handlers (`e && e.range`)
+- API responses that may be partial or malformed
+
+### Fault Tolerance — Never Crash the Main Flow
+- Wrap risky operations in `try/catch`.
+- A failure in one loop iteration, utility call, or secondary feature must **not** abort the entire script.
+- Use per-item error isolation in loops:
+
+```javascript
+rows.forEach(function (row, index) {
+  try {
+    processRow_(row);
+  } catch (err) {
+    console.error('processRows: row failed', { index: index, row: row, error: err });
+    // continue to next row
+  }
+});
+```
+
+### Graceful Degradation
+- Return safe defaults (`''`, `[]`, `{}`, `false`, `{ success: false }`) instead of throwing from utility functions unless the caller explicitly requires fail-fast behavior.
+- Secondary features (notifications, audit logs, analytics) must fail silently with logging — never block the primary operation.
+
+### Visible Logging (Required on Catch)
+Always log contextual data when swallowing or handling errors:
+
+```javascript
+catch (err) {
+  console.error('ModuleName.functionName: description of failure', {
+    contextKey: contextValue,
+    error: err,
+    stack: err && err.stack,
+  });
+}
+```
+
+Use `console.error()` (Stackdriver) for production visibility; `Logger.log()` is acceptable for local debugging.
+
+---
+
+## 8. Performance Best Practices (GAS-Specific)
+
+### Execution Budget Awareness
+Design every workflow with these limits in mind:
+- **6-minute** maximum execution time per run
+- Daily quotas on UrlFetch, email sends, trigger invocations, and API calls
+- Spreadsheet service calls are relatively expensive — batch them
+
+### Spreadsheet I/O — Always Batch
+```javascript
+// ✅ GOOD — single read, single write
+const data = sheet.getRange(1, 1, lastRow, lastCol).getValues();
+// mutate data in memory
+sheet.getRange(1, 1, lastRow, lastCol).setValues(data);
+
+// ❌ BAD — cell-by-cell in a loop
+for (var i = 1; i <= lastRow; i++) {
+  sheet.getRange(i, 1).setValue(data[i]);
+}
+```
+
+### Minimize External Calls
+- Batch `UrlFetchApp.fetch()` requests; avoid N+1 HTTP patterns.
+- Cache stable data with `CacheService` or `PropertiesService` when appropriate.
+- Read script properties once per execution, not inside tight loops.
+
+### Trigger Handler Performance
+- Exit early when the edit event is irrelevant (wrong sheet, wrong column, blank change).
+- Avoid full-sheet scans; use `e.range` to scope work to the changed area.
+- Defer heavy work to time-driven installable triggers when an `onEdit` handler would exceed time limits.
+
+### Loop & Memory Discipline
+- Process large datasets in chunks if approaching memory or time limits.
+- Avoid redundant `getActiveSpreadsheet()` / `openById()` calls — resolve once and pass references.
+
+---
+
+## 9. Spreadsheet Schema Documentation (Mandatory)
+
+### Single Source of Truth: `SPREADSHEET_SCHEMA.md`
+All spreadsheet sheets, columns (fields), data types, and relationships **must** be documented in `SPREADSHEET_SCHEMA.md` at the project root.
+
+This file is the human-readable contract between the Google Sheet structure and the Apps Script code.
+
+### When Documentation Must Be Updated
+Update `SPREADSHEET_SCHEMA.md` in the **same change** whenever you:
+
+| Action | Required documentation update |
+|--------|-------------------------------|
+| Add a new sheet/tab | Add a new sheet section with purpose, tab name, and all columns |
+| Add a new column/field | Add the field to the correct sheet's column table |
+| Rename a sheet or column | Update the name and note the old name under **Change History** |
+| Remove a sheet or column | Mark as deprecated/removed in **Change History**; do not delete history |
+| Change a field's type, validation, or meaning | Update the field row and add a **Change History** entry |
+| Add a column constant in code (e.g., `COL_STATUS = 5`) | Ensure the column exists in `SPREADSHEET_SCHEMA.md` with matching index |
+
+### Documentation Format Per Sheet
+Each sheet entry must include:
+
+- **Tab name** (exact name as it appears in Google Sheets)
+- **Purpose** (one sentence)
+- **Header row** (usually row 1)
+- **Column table** with: Column letter, Index (1-based), Field name, Data type, Required?, Description, Used by (script file/module)
+
+### Code ↔ Schema Alignment
+- Column indices and sheet names referenced in `.gs` files must match `SPREADSHEET_SCHEMA.md`.
+- Prefer named constants for column indices in `SheetColumns.gs` or a feature-specific constants file; document those constants in the schema file.
+- Before creating a new field in code, check `SPREADSHEET_SCHEMA.md` for an existing field that can be reused.
+
+### AI Agent Rule — Schema Sync
+When implementing any feature that introduces or modifies sheets or fields:
+
+1. **Read** `SPREADSHEET_SCHEMA.md` first.
+2. **Update** `SPREADSHEET_SCHEMA.md` in the same task as the code change.
+3. **Add a Change History entry** with date, author/context, and summary.
+4. **Never** add a column index in code without a matching schema entry.
+
+```markdown
+## Change History
+| Date | Change | Sheets/Fields affected |
+|------|--------|------------------------|
+| 2026-07-09 | Initial schema | All |
+```
+
+---
+
+## Code Review Checklist (Apply to Every Change)
+
+Before finalizing any code, verify:
+
+- [ ] No `import`/`export`; code uses namespace objects
+- [ ] No Simple Triggers used for shared multi-user automation
+- [ ] `setupApp()` / `initializeTriggers()` exists and is idempotent
+- [ ] Test vs. production paths are separated; test code cannot touch production data
+- [ ] File name is PascalCase and purpose-driven
+- [ ] No duplicate logic; existing modules scanned for reuse
+- [ ] Feature code is grouped by domain prefix/namespace
+- [ ] All inputs validated; all catches log with `console.error()` and context
+- [ ] Secondary failures cannot crash primary workflow
+- [ ] Spreadsheet reads/writes are batched; external fetches minimized
+- [ ] Trigger handlers exit early on irrelevant events
+- [ ] `SPREADSHEET_SCHEMA.md` updated if any sheet or field was added, renamed, or removed
+- [ ] Column indices in code match the schema documentation
+
+---
+
+## AI Agent Behavior
+
+When implementing requests in this project:
+
+1. **Read first** — Search existing `.gs` files for overlapping functionality before writing new code.
+2. **Prefer extension** — Modify existing namespaces over creating parallel modules.
+3. **Minimize scope** — Only change files required for the task; do not refactor unrelated code.
+4. **Match conventions** — Mirror naming, namespace structure, and error-handling patterns already in the codebase.
+5. **Propose `setupApp()` changes** — When adding triggers, always update the setup function and document the new trigger.
+6. **Flag risks** — Call out quota, permission, or 6-minute timeout risks when designing new features.
+7. **Keep schema in sync** — Any new sheet or field in code must be reflected in `SPREADSHEET_SCHEMA.md` in the same change.
