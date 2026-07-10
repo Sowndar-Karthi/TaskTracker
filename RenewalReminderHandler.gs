@@ -4,14 +4,33 @@
 const RenewalReminderHandler = (function () {
   'use strict';
 
-  const RECALC_TRIGGER_COLUMNS = [
-    SheetColumns.RENEWAL.LAST_PAID_DATE,
-    SheetColumns.RENEWAL.RECURRENCE_INTERVAL,
-    SheetColumns.RENEWAL.RECURRENCE_UNIT,
-    SheetColumns.RENEWAL.ANCHOR_TYPE,
-    SheetColumns.RENEWAL.ANCHOR_DATE,
-    SheetColumns.RENEWAL.DUE_DAY_OF_MONTH,
-  ];
+  function assertSheetColumns_() {
+    if (typeof SheetColumns === 'undefined') {
+      throw new Error(
+        'SheetColumns is not defined. Open SheetColumns.gs in Apps Script and paste the FULL file from your PC ' +
+          '(must start with "const SheetColumns = (function () {" and include RENEWAL). ' +
+          'Run debugWhatIsBroken() for a full checklist.'
+      );
+    }
+    if (!SheetColumns.RENEWAL || SheetColumns.RENEWAL.LAST_COLUMN !== 14) {
+      throw new Error(
+        'SheetColumns.gs is incomplete — RENEWAL section missing or truncated. ' +
+          'Paste the full 121-line SheetColumns.gs from your PC.'
+      );
+    }
+  }
+
+  function getRecalcTriggerColumns_() {
+    assertSheetColumns_();
+    return [
+      SheetColumns.RENEWAL.LAST_PAID_DATE,
+      SheetColumns.RENEWAL.RECURRENCE_INTERVAL,
+      SheetColumns.RENEWAL.RECURRENCE_UNIT,
+      SheetColumns.RENEWAL.ANCHOR_TYPE,
+      SheetColumns.RENEWAL.ANCHOR_DATE,
+      SheetColumns.RENEWAL.DUE_DAY_OF_MONTH,
+    ];
+  }
 
   function isRenewalSheet_(sheetName) {
     return (
@@ -45,7 +64,7 @@ const RenewalReminderHandler = (function () {
 
     const startCol = e.range.getColumn();
     const endCol = startCol + e.range.getNumColumns() - 1;
-    return rangeTouchesColumns_(startCol, endCol, RECALC_TRIGGER_COLUMNS);
+    return rangeTouchesColumns_(startCol, endCol, getRecalcTriggerColumns_());
   }
 
   function processEdit_(e) {
@@ -102,6 +121,22 @@ const RenewalReminderHandler = (function () {
  * Daily trigger — sends renewal reminders when Reminder Days Before matches today.
  */
 function processScheduledRenewalReminders_() {
+  if (typeof SheetColumns === 'undefined') {
+    const message =
+      'SheetColumns is not defined — SheetColumns.gs is missing or incomplete in Apps Script. ' +
+      'Paste the full file from your PC, then run debugWhatIsBroken().';
+    Logger.log('RenewalReminderHandler: ' + message);
+    try {
+      ErrorLogModule.error('RenewalReminderHandler', 'processScheduledRenewalReminders_', message, {
+        triggerSource: 'scheduled-renewal',
+        fix: 'Paste full SheetColumns.gs (121 lines) into Apps Script',
+      });
+    } catch (logErr) {
+      // ErrorLogModule may also be missing
+    }
+    return;
+  }
+
   ErrorLogModule.setTriggerSource('scheduled-renewal');
   const lock = LockService.getScriptLock();
   var hasLock = false;

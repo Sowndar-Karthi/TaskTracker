@@ -81,6 +81,23 @@ const RenewalTrackerModule = (function () {
     return SpreadsheetUtils.normalizeText(value);
   }
 
+  function parseEmailList_(rawValue) {
+    if (typeof EmailSettingsModule !== 'undefined' && EmailSettingsModule.parseEmailList) {
+      return EmailSettingsModule.parseEmailList(rawValue);
+    }
+    if (!rawValue || String(rawValue).trim() === '') {
+      return [];
+    }
+    return String(rawValue)
+      .split(',')
+      .map(function (email) {
+        return String(email).trim();
+      })
+      .filter(function (email) {
+        return email !== '' && email.indexOf('@') > 0;
+      });
+  }
+
   function parseReminderDays_(rawValue) {
     if (!rawValue || String(rawValue).trim() === '') {
       return [];
@@ -114,7 +131,7 @@ const RenewalTrackerModule = (function () {
       lastPaidDate: parseDate_(row[SheetColumns.RENEWAL.LAST_PAID_DATE - 1]),
       nextDueDate: parseDate_(row[SheetColumns.RENEWAL.NEXT_DUE_DATE - 1]),
       reminderDaysBefore: parseReminderDays_(row[SheetColumns.RENEWAL.REMINDER_DAYS_BEFORE - 1]),
-      reminderEmails: EmailSettingsModule.parseEmailList(row[SheetColumns.RENEWAL.REMINDER_EMAIL - 1]),
+      reminderEmails: parseEmailList_(row[SheetColumns.RENEWAL.REMINDER_EMAIL - 1]),
       status: String(row[SheetColumns.RENEWAL.STATUS - 1] || '').trim(),
       statusKey: normalizeStatus_(row[SheetColumns.RENEWAL.STATUS - 1]),
     };
