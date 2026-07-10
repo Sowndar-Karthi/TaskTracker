@@ -1,0 +1,120 @@
+/**
+ * Column indices for Team Project Tracker sheets (1-based).
+ */
+const SheetColumns = (function () {
+  'use strict';
+
+  const MAIN = {
+    PROJECT_NAME: 1,
+    WEBSITE_URL: 2,
+    TASK: 3,
+    PRIORITY: 4,
+    ASSIGN: 5,
+    START_DATE: 6,
+    END_DATE: 7,
+    AS_PER_WO: 8,
+    STATUS: 9,
+    ENV: 10,
+    ESTIMATED_EFFORT: 11,
+    ACTUAL_EFFORT: 12,
+    INFORMED: 13,
+    SUPPORT_BLOCKER: 14,
+    LATEST_UPDATE: 15,
+    PAGE_URL: 16,
+    FUNCTIONALITY: 17,
+    MAIL_SUBJECT: 18,
+    INTERNAL_MAIL_SUBJECT: 19,
+    GMAIL_THREAD_ID: 22,
+    GOOGLE_TASK_ID: 23,
+    LAST_COLUMN: 23,
+  };
+
+  const SUB = {
+    PROJECT_NAME: 1,
+    MAIN_TASK_NAME: 2,
+    TICKET_ID: 3,
+    TASK: 4,
+    PRIORITY: 5,
+    ASSIGN: 6,
+    START_DATE: 7,
+    END_DATE: 8,
+    AS_PER_WO: 9,
+    STATUS: 10,
+    ENV: 11,
+    ACCOUNT: 12,
+    ESTIMATED_EFFORT: 13,
+    ACTUAL_EFFORT: 14,
+    INFORMED: 15,
+    SUPPORT_BLOCKER: 16,
+    LATEST_UPDATE: 17,
+    PAGE_URL: 18,
+    FUNCTIONALITY: 19,
+    MAIL_SUBJECT: 20,
+    INTERNAL_MAIL_SUBJECT: 21,
+    GMAIL_THREAD_ID: 24,
+    GOOGLE_TASK_ID: 25,
+    LAST_COLUMN: 25,
+  };
+
+  const MATCHING = {
+    ID: 1,
+    MAIN_SHEET: 2,
+    SUB_SHEET: 3,
+    COMPLETED_SHEET: 4,
+    LAST_COLUMN: 4,
+  };
+
+  const EMAIL = {
+    TO: 1,
+    CC: 2,
+    BCC: 3,
+    DATA_SHEET_NAME: 4,
+    TIMEZONE: 5,
+    ALERT_TIME: 6,
+    NOTIFICATION_TYPE: 7,
+    LAST_COLUMN: 7,
+  };
+
+  const ERROR = {
+    LOGGED_AT: 1,
+    SEVERITY: 2,
+    MODULE: 3,
+    FUNCTION: 4,
+    SHEET_NAME: 5,
+    ROW_INDEX: 6,
+    TASK_KEY: 7,
+    MESSAGE: 8,
+    DETAILS: 9,
+    TRIGGER_SOURCE: 10,
+    RESOLVED: 11,
+    FIX_NOTES: 12,
+    LAST_COLUMN: 12,
+  };
+
+  const RENEWAL = {
+    ITEM_NAME: 1,
+    CATEGORY: 2,
+    RECURRENCE_INTERVAL: 3,
+    RECURRENCE_UNIT: 4,
+    ANCHOR_TYPE: 5,
+    ANCHOR_DATE: 6,
+    DUE_DAY_OF_MONTH: 7,
+    MINIMUM_DUE_AMOUNT: 8,
+    TOTAL_DUE_AMOUNT: 9,
+    LAST_PAID_DATE: 10,
+    NEXT_DUE_DATE: 11,
+    REMINDER_DAYS_BEFORE: 12,
+    REMINDER_EMAIL: 13,
+    STATUS: 14,
+    LAST_COLUMN: 14,
+  };
+
+  return {
+    MAIN: MAIN,
+    SUB: SUB,
+    MATCHING: MATCHING,
+    EMAIL: EMAIL,
+    ERROR: ERROR,
+    RENEWAL: RENEWAL,
+  };
+})();
