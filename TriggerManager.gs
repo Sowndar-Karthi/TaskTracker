@@ -9,6 +9,9 @@ const TriggerManager = (function () {
     SCHEDULED_COMPLETIONS: 'processScheduledCompletions_',
     SCHEDULED_NOTIFICATIONS: 'processScheduledNotifications_',
     SCHEDULED_RENEWAL_REMINDERS: 'processScheduledRenewalReminders_',
+    SCHEDULED_IRCTC_IMPORT: 'processScheduledIrctcImport_',
+    SCHEDULED_TRAIN_REMINDERS: 'processScheduledTrainReminders_',
+    SCHEDULED_TRAIN_ARCHIVE: 'processScheduledTrainArchive_',
   };
 
   function removeAllProjectTriggers_() {
@@ -43,6 +46,22 @@ const TriggerManager = (function () {
       .create();
   }
 
+  function createIrctcImportTrigger_() {
+    ScriptApp.newTrigger(HANDLERS.SCHEDULED_IRCTC_IMPORT).timeBased().everyHours(1).create();
+  }
+
+  function createTrainReminderTrigger_() {
+    ScriptApp.newTrigger(HANDLERS.SCHEDULED_TRAIN_REMINDERS).timeBased().everyMinutes(30).create();
+  }
+
+  function createTrainArchiveTrigger_() {
+    ScriptApp.newTrigger(HANDLERS.SCHEDULED_TRAIN_ARCHIVE)
+      .timeBased()
+      .everyDays(1)
+      .atHour(AppConfig.getRenewalReminderHour())
+      .create();
+  }
+
   function listProjectTriggers_() {
     return ScriptApp.getProjectTriggers().map(function (trigger) {
       return {
@@ -66,6 +85,9 @@ const TriggerManager = (function () {
     createHourlyCompletionTrigger_();
     createNotificationTrigger_();
     createRenewalReminderTrigger_();
+    createIrctcImportTrigger_();
+    createTrainReminderTrigger_();
+    createTrainArchiveTrigger_();
 
     console.log('TriggerManager.initializeTriggers: complete', {
       triggers: listProjectTriggers_(),

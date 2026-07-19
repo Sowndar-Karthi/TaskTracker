@@ -31,6 +31,31 @@ function setupApp() {
     Logger.log('Renewal Tracker OK — ' + RenewalTrackerModule.readAllItems().length + ' item(s) loaded');
   }
 
+  const bookingSheet = TrainBookingHistoryModule.getBookingSheet();
+  if (!bookingSheet) {
+    Logger.log('WARNING: Could not create/open Train Booking History');
+    ErrorLogModule.warning('Setup', 'setupApp', 'Train Booking History unavailable', {
+      triggerSource: 'manual',
+    });
+  } else {
+    Logger.log('Train Booking History OK — headers ensured');
+  }
+
+  const completedSheet = TrainJourneyArchiveModule.getCompletedSheet();
+  if (completedSheet && bookingSheet) {
+    Logger.log('Train Completed Journeys OK');
+  }
+
+  const trainRouteValidation = TrainRouteModule.validateSheetExists();
+  if (!trainRouteValidation.valid) {
+    Logger.log('WARNING: Train Route — ' + trainRouteValidation.error);
+    ErrorLogModule.warning('Setup', 'setupApp', trainRouteValidation.error, { triggerSource: 'manual' });
+  } else {
+    Logger.log(
+      'Train Route OK — ' + TrainRouteModule.readActiveRoutes().length + ' active route(s)'
+    );
+  }
+
   return TriggerManager.initializeTriggers();
 }
 

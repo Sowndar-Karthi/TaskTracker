@@ -4,7 +4,7 @@
 > Code and spreadsheet structure must stay in sync. See `.cursorrules` §9 for rules.
 
 **Spreadsheet name:** Team Project Tracker  
-**Last updated:** 2026-07-09  
+**Last updated:** 2026-07-19  
 **Production spreadsheet ID:** _(set in `AppConfig.gs`)_  
 **Test spreadsheet ID:** _(set in `AppConfig.gs`)_
 
@@ -37,6 +37,10 @@
 | 📧 Email Settings | Email alerts: recipients, data sheet, schedule | 1 | Active |
 | _Completion Queue | Hidden — delayed completion move queue (auto-created by script) | 1 | System |
 | Error | Automation error & warning log for debugging and fixes | 1 | System |
+| Train Route | Recurring train travel templates (day, stations, reminders) | 1 | Active |
+| Train Booking History | Bookings imported from IRCTC email + manual | 1 | Active |
+| Train Completed Journeys | Archived completed train journeys (same columns as Booking History) | 1 | Active |
+| Match Place | Optional — canonical station labels for IRCTC From/To matching | 1 | Optional |
 
 ---
 
@@ -480,6 +484,12 @@ Defined in `SheetColumns.gs`.
 | `SheetColumns.ERROR.SEVERITY` | 2 | B | Severity | Error |
 | `SheetColumns.ERROR.MESSAGE` | 8 | H | Message | Error |
 | `SheetColumns.ERROR.RESOLVED` | 11 | K | Resolved | Error |
+| `SheetColumns.TRAIN_ROUTE.ROUTE_NAME` | 1 | A | Route Name | Train Route |
+| `SheetColumns.TRAIN_ROUTE.RECURRENCE` | 5 | E | Recurrence | Train Route |
+| `SheetColumns.TRAIN_ROUTE.TRAVEL_DATE` | 8 | H | Travel Date | Train Route |
+| `SheetColumns.TRAIN_BOOKING.FROM` | 1 | A | From | Train Booking History |
+| `SheetColumns.TRAIN_BOOKING.PNR` | 9 | I | PNR | Train Booking History |
+| `SheetColumns.TRAIN_BOOKING.GMAIL_THREAD_ID` | 17 | Q | Gmail Thread ID | Train Booking History |
 
 ### System config (code only — not team sheet names)
 
@@ -489,6 +499,10 @@ Defined in `SheetColumns.gs`.
 | `AppConfig.getEmailSettingsSheetName()` | `AppConfig.gs` | Tab name of 📧 Email Settings |
 | `AppConfig.getErrorSheetName()` | `AppConfig.gs` | Tab name of Error log (`Error`) |
 | `AppConfig.getCompletionQueueSheetName()` | `AppConfig.gs` | Hidden queue tab (`_Completion Queue`) |
+| `AppConfig.getTrainRouteSheetName()` | `AppConfig.gs` | Train Route templates tab |
+| `AppConfig.getTrainBookingHistorySheetName()` | `AppConfig.gs` | IRCTC import target tab |
+| `AppConfig.getTrainCompletedJourneysSheetName()` | `AppConfig.gs` | Completed journeys archive tab |
+| `AppConfig.getTrainMatchPlaceSheetName()` | `AppConfig.gs` | Optional station label map |
 
 **Team sheet names (BA, Product, Umbraco, etc.) are NOT in code.** They live only in the Matching Sheet data rows above.
 
@@ -506,6 +520,106 @@ Defined in `SheetColumns.gs`.
 | `* Task Tracker` | Task row | `* Sub Task Tracker` | Sub-task rows | One main task → many sub-tasks |
 | `* Task Tracker` | Status = complete | `* Completed Task` | Archive row | Task moved/copied on completion |
 | 📧 Email Settings | `DATA SHEET NAME` | Named task tracker | — | Alert source sheet |
+| Gmail (IRCTC) | Unread confirmation | Train Booking History | Booking row | TrainIrctcImportModule — hourly / manual |
+| Train Booking History | Completed / past journey | Train Completed Journeys | Archived row | Manual for now (auto-archive TBD) |
+| Match Place | Station label (col A) | Train Booking History | From / To | Canonical label mapping on import |
+
+---
+
+## Train Route
+
+**Tab name:** `Train Route`  
+**Purpose:** Weekly and one-time travel templates (stations, train prefs, reminder schedule). Not written by IRCTC import.  
+**Header row:** 1 | **Data starts:** 2
+
+| Col | Index | Field Name | Type | Required | Description | Used By |
+|-----|-------|------------|------|----------|-------------|---------|
+| A | 1 | Route Name | Text | Yes | Template label | Future reminders / matching |
+| B | 2 | From Station | Text | Yes | e.g. `TAMBARAM ( TBM)` | Future matching |
+| C | 3 | To Station | Text | Yes | e.g. `KULITALAI (KLT)` | Future matching |
+| D | 4 | Day of Week | Text | Conditional | Required when Recurrence = Weekly | Future journey generation |
+| E | 5 | Recurrence | Text | Yes | `Weekly` or `One-time` | Future reminders |
+| F | 6 | Active | Text | Yes | Yes / No | Filter active templates |
+| G | 7 | Preferred Class | Text | No | Seat class (SL, 3A) — not Weekly/One-time | Manual / future booking UX |
+| H | 8 | Travel Date | Date | Conditional | Required when Recurrence = One-time (e.g. `11-Oct-2026`) | Future reminders / ARP |
+| I | 9 | Preferred Train No | Text | No | Preferred train number | Manual / future booking UX |
+| J | 10 | Preferred Train Name | Text | No | Preferred train name | Manual / future booking UX |
+| K | 11 | Reminder Days Before | Text | No | Comma list e.g. `0,1,2` | Future reminders |
+| L | 12 | Alert Time | Text | No | Comma list e.g. `9:30 AM, 13:00` | Future reminders |
+| M | 13 | Reminder Email | Text | No | Comma-separated emails | Future reminders |
+| N | 14 | Notes | Text | No | Free text | — |
+
+**Rules**
+- **Weekly** → fill Day of Week; leave Travel Date empty  
+- **One-time** → fill Travel Date; leave Day of Week empty  
+
+**Code constants:** `SheetColumns.TRAIN_ROUTE.*` · `AppConfig.getTrainRouteSheetName()`
+
+---
+
+## Train Booking History
+
+**Tab name:** `Train Booking History`  
+**Purpose:** Concrete bookings — primarily filled by IRCTC Gmail import (`TrainIrctcImportModule`).  
+**Header row:** 1 | **Data starts:** 2
+
+| Col | Index | Field Name | Type | Required | Description | Used By |
+|-----|-------|------------|------|----------|-------------|---------|
+| A | 1 | From | Text | Yes | From station (resolved via Match Place if present) | TrainIrctcImportModule |
+| B | 2 | To | Text | Yes | To station | TrainIrctcImportModule |
+| C | 3 | Date of Journey | Text / Date | Yes | e.g. `26-Jul-2026` | TrainIrctcImportModule |
+| D | 4 | Name | Text | No | Passenger name | TrainIrctcImportModule |
+| E | 5 | Status | Text | No | CONFIRMED / RAC / WL / BOOKED | TrainIrctcImportModule |
+| F | 6 | Coach | Text | No | Coach code | TrainIrctcImportModule |
+| G | 7 | Seat / Berth | Text | No | Seat or berth | TrainIrctcImportModule |
+| H | 8 | Class | Text | No | Travel class | TrainIrctcImportModule |
+| I | 9 | PNR | Text | Yes* | 10-digit PNR (*or Transaction ID) | TrainIrctcImportModule (dedupe) |
+| J | 10 | Train No | Text | No | Train number | TrainIrctcImportModule |
+| K | 11 | Scheduled Departure | Text | No | Departure datetime | TrainIrctcImportModule |
+| L | 12 | Date of Boarding | Text / Date | No | Boarding date | TrainIrctcImportModule |
+| M | 13 | Transaction ID | Text | Yes* | IRCTC transaction id | TrainIrctcImportModule (dedupe) |
+| N | 14 | Date & Time of Booking | Text | No | Booking timestamp | TrainIrctcImportModule |
+| O | 15 | User Id | Text | No | IRCTC user id | TrainIrctcImportModule |
+| P | 16 | Passenger Mobile | Text | No | 10-digit mobile | TrainIrctcImportModule |
+| Q | 17 | Gmail Thread ID | Text | No | Source Gmail thread | TrainIrctcImportModule (dedupe) |
+
+**Triggers / entry points**
+- Hourly: `processScheduledIrctcImport_`
+- Manual: `runExtractIrctcEmails()`, `testParseSampleIrctcEmail()`
+
+**Gmail:** Unread mail from `ticketadmin@irctc.co.in` or configured forward addresses with IRCTC subjects. Optional Script Property `IRCTC_GMAIL_QUERY` overrides the search string.
+
+**Reminders (Train Route)**
+- Every 30 minutes: `processScheduledTrainReminders_`
+- Manual: `runTrainRemindersNow()`
+- **BOOK** — when today is Reminder Days Before the IRCTC open date (travel − 60 days); **skipped** if a matching booking exists on Train Booking History
+- **TRAVEL** — when today is Reminder Days Before the travel date; still sent after booking
+- **Missing list** — unbooked travel dates in the next **90 days** (lookahead); Status = `Booking opens TODAY` / `Opens in N day(s)` / `Open — not booked`. ARP for open-date math stays **60** days.
+- One digest **per recipient email** (each address listed on Reminder Email gets only the routes that include them)
+- Fires only inside **Alert Time** windows (±15 minutes), same style as task digests
+
+**Code constants:** `SheetColumns.TRAIN_BOOKING.*` · `AppConfig.getTrainBookingHistorySheetName()`
+
+---
+
+## Train Completed Journeys
+
+**Tab name:** `Train Completed Journeys`  
+**Purpose:** Archive of finished journeys — same column layout as Train Booking History.  
+**Header row:** 1 | **Data starts:** 2  
+
+Columns: identical to [Train Booking History](#train-booking-history).  
+**Code:** `AppConfig.getTrainCompletedJourneysSheetName()` · `SheetColumns.TRAIN_BOOKING`  
+**Note:** Past journeys (travel date before today) are auto-moved daily by `processScheduledTrainArchive_` from Train Booking History → Train Completed Journeys. Manual: `runArchiveTrainJourneysNow()`.
+
+---
+
+## Match Place (optional)
+
+**Tab name:** `Match Place`  
+**Purpose:** Column A lists canonical station labels (e.g. `TAMBARAM ( TBM)`). IRCTC From/To text is mapped to these labels by station code or name.  
+**Used by:** `TrainIrctcParseModule`  
+If the sheet is missing, email station text is stored as-is.
 
 ---
 
@@ -523,6 +637,12 @@ Defined in `SheetColumns.gs`.
 | 2026-07-09 | Feature: EmailNotifications | Status/Priority alerts via Notification Type; scheduled + immediate email | 📧 Email Settings col G, NotificationHandler |
 | 2026-07-09 | User: sub column add | Added `Account` column (L) on sub-task sheets; shifted columns L–Y | All Sub Task Tracker sheets, SheetColumns.gs |
 | 2026-07-09 | Feature: ErrorLog | Added `Error` sheet for automation error/warning logging | Error sheet, ErrorLogModule.gs |
+| 2026-07-19 | Feature: TrainIrctcImport | Train Route templates; IRCTC email → Train Booking History; optional archive to Train Completed Journeys | Train Route, Train Booking History, Train Completed Journeys, Match Place |
+| 2026-07-19 | User: Train Route columns | Added Recurrence + Travel Date; reordered Active / Preferred Class / train fields | Train Route, SheetColumns.TRAIN_ROUTE |
+| 2026-07-19 | Feature: TrainReminders | BOOK (ARP 60-day open) + TRAVEL reminders; skip BOOK if Booking History match | Train Route, TrainReminder*, TriggerManager |
+| 2026-07-19 | Feature: TrainArchive | Auto-move past travel dates Booking History → Train Completed Journeys (daily) | TrainJourneyArchive*, TriggerManager |
+| 2026-07-19 | Update: TrainReminder digest | Per-recipient digests; 90-day missing list; Status booking-open countdown; From/To columns | AppConfig, TrainReminderModule |
+| 2026-07-19 | Fix: booking match | Train reminder match accepts reverse From/To on same journey date | TrainBookingHistoryModule |
 
 ### How to log changes
 

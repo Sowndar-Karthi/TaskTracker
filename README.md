@@ -235,9 +235,39 @@ Google Scrip/
 ├── CompletionMoveModule.gs
 ├── CompletionTaskHandler.gs
 ├── TaskSyncHandler.gs
+├── RenewalReminderHandler.gs
+├── TrainBookingHistoryModule.gs
+├── TrainIrctcParseModule.gs
+├── TrainIrctcImportModule.gs
+├── TrainIrctcImportHandler.gs
 ├── TriggerManager.gs
 └── Setup.gs
 ```
+
+### Train tracking (IRCTC email import)
+
+| Sheet | Role |
+|-------|------|
+| **Train Route** | Your recurring templates (reminders later) |
+| **Train Booking History** | IRCTC confirmations land here |
+| **Train Completed Journeys** | Archive (manual for now) |
+| **Match Place** *(optional)* | Canonical station labels in column A |
+
+**How to run**
+1. Ensure **Train Booking History** headers match schema (or run `setupApp()` / `runExtractIrctcEmails()` — headers are auto-created).
+2. Re-run **`setupApp()`** to install the hourly `processScheduledIrctcImport_` trigger (needs Gmail permission).
+3. Manual test: `testParseSampleIrctcEmail()` then `runExtractIrctcEmails()` (imports **unread** matching IRCTC mail).
+
+Override Gmail search with Script Property `IRCTC_GMAIL_QUERY` if needed.
+
+**Train route reminders**
+- Re-run **`setupApp()`** to install `processScheduledTrainReminders_` (every 30 minutes).
+- Manual: **`runTrainRemindersNow()`** (must be within an Alert Time window ±15 min, e.g. 9:30 / 13:00 / 15:00).
+- BOOK reminders are skipped when From/To/date already exist on **Train Booking History**.
+
+**Completed journeys archive**
+- Daily: `processScheduledTrainArchive_` moves rows whose **Date of Journey / Travel Date** is before today from **Train Booking History** → **Train Completed Journeys**.
+- Manual: **`runArchiveTrainJourneysNow()`**.
 
 ---
 

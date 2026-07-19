@@ -109,6 +109,53 @@ const SheetColumns = (function () {
     LAST_COLUMN: 14,
   };
 
+  /**
+   * Train Route — weekly + one-time travel templates.
+   * Order must match the spreadsheet header row exactly.
+   */
+  const TRAIN_ROUTE = {
+    ROUTE_NAME: 1,
+    FROM_STATION: 2,
+    TO_STATION: 3,
+    DAY_OF_WEEK: 4,
+    RECURRENCE: 5,
+    ACTIVE: 6,
+    PREFERRED_CLASS: 7,
+    TRAVEL_DATE: 8,
+    PREFERRED_TRAIN_NO: 9,
+    PREFERRED_TRAIN_NAME: 10,
+    REMINDER_DAYS_BEFORE: 11,
+    ALERT_TIME: 12,
+    REMINDER_EMAIL: 13,
+    NOTES: 14,
+    LAST_COLUMN: 14,
+  };
+
+  /**
+   * Train Booking History / Train Completed Journeys —
+   * IRCTC import columns (same layout on both sheets).
+   */
+  const TRAIN_BOOKING = {
+    FROM: 1,
+    TO: 2,
+    DATE_OF_JOURNEY: 3,
+    NAME: 4,
+    STATUS: 5,
+    COACH: 6,
+    SEAT_BERTH: 7,
+    CLASS: 8,
+    PNR: 9,
+    TRAIN_NO: 10,
+    SCHEDULED_DEPARTURE: 11,
+    DATE_OF_BOARDING: 12,
+    TRANSACTION_ID: 13,
+    BOOKING_DATETIME: 14,
+    USER_ID: 15,
+    PASSENGER_MOBILE: 16,
+    GMAIL_THREAD_ID: 17,
+    LAST_COLUMN: 17,
+  };
+
   return {
     MAIN: MAIN,
     SUB: SUB,
@@ -116,5 +163,7 @@ const SheetColumns = (function () {
     EMAIL: EMAIL,
     ERROR: ERROR,
     RENEWAL: RENEWAL,
+    TRAIN_ROUTE: TRAIN_ROUTE,
+    TRAIN_BOOKING: TRAIN_BOOKING,
   };
 })();

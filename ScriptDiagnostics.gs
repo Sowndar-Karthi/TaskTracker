@@ -8,12 +8,12 @@ const ScriptDiagnosticsModule = (function () {
   {
     file: 'AppConfig.gs',
     module: 'AppConfig',
-    exports: ['getSpreadsheet', 'getSpreadsheetId', 'getRenewalTrackerSheetName', 'isTesting'],
+    exports: ['getSpreadsheet', 'getSpreadsheetId', 'getRenewalTrackerSheetName', 'getTrainBookingHistorySheetName', 'isTesting'],
   },
   {
     file: 'SheetColumns.gs',
     module: 'SheetColumns',
-    exports: ['MAIN', 'SUB', 'MATCHING', 'EMAIL', 'ERROR', 'RENEWAL'],
+    exports: ['MAIN', 'SUB', 'MATCHING', 'EMAIL', 'ERROR', 'RENEWAL', 'TRAIN_ROUTE', 'TRAIN_BOOKING'],
   },
   {
     file: 'SpreadsheetUtils.gs',
@@ -125,6 +125,55 @@ const ScriptDiagnosticsModule = (function () {
     functions: ['processScheduledRenewalReminders_', 'runRenewalRemindersNow', 'runRecalculateRenewalDueDates'],
   },
   {
+    file: 'TrainBookingHistoryModule.gs',
+    module: 'TrainBookingHistoryModule',
+    exports: ['getBookingSheet', 'appendParsedRow', 'rowExists', 'validateSheetExists', 'hasMatchingBooking', 'sortByJourneyDate'],
+    functions: ['runSortTrainBookingHistory'],
+  },
+  {
+    file: 'TrainIrctcParseModule.gs',
+    module: 'TrainIrctcParseModule',
+    exports: ['parseEmailBody', 'getMessageBody', 'clearMatchPlaceCache'],
+  },
+  {
+    file: 'TrainIrctcImportModule.gs',
+    module: 'TrainIrctcImportModule',
+    exports: ['extractEmails', 'extractEmailsWithLock', 'getGmailQuery'],
+  },
+  {
+    file: 'TrainIrctcImportHandler.gs',
+    module: 'TrainIrctcImportHandler',
+    exports: ['processScheduledImport', 'runImportNow'],
+    functions: ['processScheduledIrctcImport_', 'runExtractIrctcEmails', 'testParseSampleIrctcEmail'],
+  },
+  {
+    file: 'TrainRouteModule.gs',
+    module: 'TrainRouteModule',
+    exports: ['readActiveRoutes', 'resolveTravelDate', 'listUpcomingTravelDates', 'validateSheetExists'],
+  },
+  {
+    file: 'TrainReminderModule.gs',
+    module: 'TrainReminderModule',
+    exports: ['processDueReminders', 'bookingOpenDate'],
+  },
+  {
+    file: 'TrainReminderHandler.gs',
+    module: 'TrainReminderHandler',
+    exports: ['processScheduledReminders', 'runRemindersNow'],
+    functions: ['processScheduledTrainReminders_', 'runTrainRemindersNow'],
+  },
+  {
+    file: 'TrainJourneyArchiveModule.gs',
+    module: 'TrainJourneyArchiveModule',
+    exports: ['archivePastJourneys', 'getCompletedSheet'],
+  },
+  {
+    file: 'TrainJourneyArchiveHandler.gs',
+    module: 'TrainJourneyArchiveHandler',
+    exports: ['processScheduledArchive', 'runArchiveNow'],
+    functions: ['processScheduledTrainArchive_', 'runArchiveTrainJourneysNow'],
+  },
+  {
     file: 'ScriptDiagnostics.gs',
     module: 'ScriptDiagnosticsModule',
     exports: ['runFullDiagnostics', 'validateProjectFiles'],
@@ -139,6 +188,8 @@ const ScriptDiagnosticsModule = (function () {
     EMAIL: 7,
     ERROR: 12,
     RENEWAL: 14,
+    TRAIN_ROUTE: 14,
+    TRAIN_BOOKING: 17,
   };
 
   const EXPECTED_TRIGGERS = [
@@ -146,6 +197,9 @@ const ScriptDiagnosticsModule = (function () {
     'processScheduledCompletions_',
     'processScheduledNotifications_',
     'processScheduledRenewalReminders_',
+    'processScheduledIrctcImport_',
+    'processScheduledTrainReminders_',
+    'processScheduledTrainArchive_',
   ];
 
   function isDefined_(name) {
@@ -571,7 +625,7 @@ const ScriptDiagnosticsModule = (function () {
 })();
 
 /**
- * Checks all 24 project files, module exports, and entry-point functions.
+ * Checks all project files, module exports, and entry-point functions.
  */
 function debugValidateProjectFiles() {
   const result = ScriptDiagnosticsModule.validateProjectFiles();
