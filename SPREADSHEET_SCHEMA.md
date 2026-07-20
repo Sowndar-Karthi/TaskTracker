@@ -487,6 +487,8 @@ Defined in `SheetColumns.gs`.
 | `SheetColumns.TRAIN_ROUTE.ROUTE_NAME` | 1 | A | Route Name | Train Route |
 | `SheetColumns.TRAIN_ROUTE.RECURRENCE` | 5 | E | Recurrence | Train Route |
 | `SheetColumns.TRAIN_ROUTE.TRAVEL_DATE` | 8 | H | Travel Date | Train Route |
+| `SheetColumns.TRAIN_ROUTE.SKIP_DATES` | 14 | N | Skip Dates | Train Route |
+| `SheetColumns.TRAIN_ROUTE.NOTES` | 15 | O | Notes | Train Route |
 | `SheetColumns.TRAIN_BOOKING.FROM` | 1 | A | From | Train Booking History |
 | `SheetColumns.TRAIN_BOOKING.PNR` | 9 | I | PNR | Train Booking History |
 | `SheetColumns.TRAIN_BOOKING.GMAIL_THREAD_ID` | 17 | Q | Gmail Thread ID | Train Booking History |
@@ -546,12 +548,14 @@ Defined in `SheetColumns.gs`.
 | J | 10 | Preferred Train Name | Text | No | Preferred train name | Manual / future booking UX |
 | K | 11 | Reminder Days Before | Text | No | Comma list e.g. `0,1,2` | Future reminders |
 | L | 12 | Alert Time | Text | No | Comma list e.g. `9:30 AM, 13:00` | Future reminders |
-| M | 13 | Reminder Email | Text | No | Comma-separated emails | Future reminders |
-| N | 14 | Notes | Text | No | Free text | — |
+| M | 13 | Reminder Email | Text | No | Comma-separated emails | TrainReminderModule |
+| N | 14 | Skip Dates | Text | No | Comma-separated travel dates to ignore e.g. `26-Jul-2026, 09-Aug-2026` | TrainReminderModule / TrainRouteModule |
+| O | 15 | Notes | Text | No | Free text | — |
 
 **Rules**
 - **Weekly** → fill Day of Week; leave Travel Date empty  
 - **One-time** → fill Travel Date; leave Day of Week empty  
+- **Skip Dates** → optional; those exact travel dates are excluded from missing list, BOOK, and TRAVEL reminders (weekly keeps other weeks)
 
 **Code constants:** `SheetColumns.TRAIN_ROUTE.*` · `AppConfig.getTrainRouteSheetName()`
 
@@ -594,7 +598,7 @@ Defined in `SheetColumns.gs`.
 - Manual: `runTrainRemindersNow()`
 - **BOOK** — when today is Reminder Days Before the IRCTC open date (travel − 60 days); **skipped** if a matching booking exists on Train Booking History
 - **TRAVEL** — when today is Reminder Days Before the travel date; still sent after booking
-- **Missing list** — unbooked travel dates in the next **90 days** (lookahead); Status = `Booking opens TODAY` / `Opens in N day(s)` / `Open — not booked`. ARP for open-date math stays **60** days.
+- **Missing list** — unbooked travel dates in the next **90 days** (lookahead); Status = `Booking opens TODAY` / `Opens in N day(s)` / `Open — not booked`. ARP for open-date math stays **60** days. Dates listed in **Skip Dates** are excluded.
 - One digest **per recipient email** (each address listed on Reminder Email gets only the routes that include them)
 - Fires only inside **Alert Time** windows (±15 minutes), same style as task digests
 
@@ -643,6 +647,7 @@ If the sheet is missing, email station text is stored as-is.
 | 2026-07-19 | Feature: TrainArchive | Auto-move past travel dates Booking History → Train Completed Journeys (daily) | TrainJourneyArchive*, TriggerManager |
 | 2026-07-19 | Update: TrainReminder digest | Per-recipient digests; 90-day missing list; Status booking-open countdown; From/To columns | AppConfig, TrainReminderModule |
 | 2026-07-19 | Fix: booking match | Train reminder match accepts reverse From/To on same journey date | TrainBookingHistoryModule |
+| 2026-07-19 | Feature: Skip Dates | Train Route col N Skip Dates — exclude specific weeks from weekly reminders | Train Route, SheetColumns, TrainRouteModule |
 
 ### How to log changes
 

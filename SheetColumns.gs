@@ -127,8 +127,9 @@ const SheetColumns = (function () {
     REMINDER_DAYS_BEFORE: 11,
     ALERT_TIME: 12,
     REMINDER_EMAIL: 13,
-    NOTES: 14,
-    LAST_COLUMN: 14,
+    SKIP_DATES: 14,
+    NOTES: 15,
+    LAST_COLUMN: 15,
   };
 
   /**

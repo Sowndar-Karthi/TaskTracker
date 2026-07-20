@@ -139,6 +139,46 @@ const TrainRouteModule = (function () {
     return result;
   }
 
+  function parseSkipDates_(raw) {
+    if (raw === null || raw === undefined || String(raw).trim() === '') {
+      return [];
+    }
+    // Google Sheets may store a single date cell as a Date
+    if (raw instanceof Date && !isNaN(raw.getTime())) {
+      return [startOfDay_(raw)];
+    }
+
+    const parts = String(raw).split(/[,;\n]+/);
+    const dates = [];
+    const seen = {};
+    parts.forEach(function (part) {
+      const parsed = parseDate_(part);
+      if (!parsed) {
+        return;
+      }
+      const key = Utilities.formatDate(parsed, getTimezone_(), 'yyyy-MM-dd');
+      if (seen[key]) {
+        return;
+      }
+      seen[key] = true;
+      dates.push(parsed);
+    });
+    return dates;
+  }
+
+  function isSkippedTravelDate_(route, travelDate) {
+    if (!route || !travelDate || !route.skipDates || route.skipDates.length === 0) {
+      return false;
+    }
+    const target = startOfDay_(travelDate).getTime();
+    for (var i = 0; i < route.skipDates.length; i++) {
+      if (route.skipDates[i] && route.skipDates[i].getTime() === target) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   function resolveTravelDate_(route, today) {
     if (!route) {
       return null;
@@ -150,16 +190,37 @@ const TrainRouteModule = (function () {
       if (route.travelDate.getTime() < today.getTime()) {
         return null;
       }
+      if (isSkippedTravelDate_(route, route.travelDate)) {
+        return null;
+      }
       return route.travelDate;
     }
     if (route.recurrence === 'weekly') {
-      return nextWeeklyTravelDate_(route.dayOfWeek, today);
+      var weekly = nextWeeklyTravelDate_(route.dayOfWeek, today);
+      var guard = 0;
+      while (weekly && isSkippedTravelDate_(route, weekly) && guard < 60) {
+        const next = new Date(weekly.getTime());
+        next.setDate(next.getDate() + 7);
+        weekly = startOfDay_(next);
+        guard++;
+      }
+      return weekly && !isSkippedTravelDate_(route, weekly) ? weekly : null;
     }
     // Fallback: prefer explicit travel date, else weekly day
     if (route.travelDate && route.travelDate.getTime() >= today.getTime()) {
-      return route.travelDate;
+      if (!isSkippedTravelDate_(route, route.travelDate)) {
+        return route.travelDate;
+      }
     }
-    return nextWeeklyTravelDate_(route.dayOfWeek, today);
+    var fallback = nextWeeklyTravelDate_(route.dayOfWeek, today);
+    var fallbackGuard = 0;
+    while (fallback && isSkippedTravelDate_(route, fallback) && fallbackGuard < 60) {
+      const nextFb = new Date(fallback.getTime());
+      nextFb.setDate(nextFb.getDate() + 7);
+      fallback = startOfDay_(nextFb);
+      fallbackGuard++;
+    }
+    return fallback && !isSkippedTravelDate_(route, fallback) ? fallback : null;
   }
 
   function normalizeRow_(row, rowIndex) {
@@ -180,6 +241,7 @@ const TrainRouteModule = (function () {
       reminderDaysBefore: parseReminderDays_(row[cols.REMINDER_DAYS_BEFORE - 1]),
       alertTimes: parseAlertTimes_(row[cols.ALERT_TIME - 1]),
       reminderEmails: parseEmails_(row[cols.REMINDER_EMAIL - 1]),
+      skipDates: parseSkipDates_(row[cols.SKIP_DATES - 1]),
       notes: String(row[cols.NOTES - 1] || '').trim(),
     };
   }
@@ -277,7 +339,8 @@ const TrainRouteModule = (function () {
       if (
         route.travelDate &&
         route.travelDate.getTime() >= start.getTime() &&
-        route.travelDate.getTime() <= end.getTime()
+        route.travelDate.getTime() <= end.getTime() &&
+        !isSkippedTravelDate_(route, route.travelDate)
       ) {
         dates.push(route.travelDate);
       }
@@ -290,7 +353,9 @@ const TrainRouteModule = (function () {
       return dates;
     }
     while (cursor.getTime() <= end.getTime()) {
-      dates.push(new Date(cursor.getTime()));
+      if (!isSkippedTravelDate_(route, cursor)) {
+        dates.push(new Date(cursor.getTime()));
+      }
       cursor = new Date(cursor.getTime());
       cursor.setDate(cursor.getDate() + 7);
       cursor = startOfDay_(cursor);
@@ -302,6 +367,7 @@ const TrainRouteModule = (function () {
     readActiveRoutes: readActiveRoutes_,
     resolveTravelDate: resolveTravelDate_,
     listUpcomingTravelDates: listUpcomingTravelDates_,
+    isSkippedTravelDate: isSkippedTravelDate_,
     parseDate: parseDate_,
     formatDate: formatDate_,
     nextWeeklyTravelDate: nextWeeklyTravelDate_,
