@@ -19,7 +19,7 @@ function debugWhatIsBroken() {
     lines.push('FIX:');
     lines.push('  1. In Apps Script, open SheetColumns.gs');
     lines.push('  2. Delete everything in that file');
-    lines.push('  3. Paste the FULL SheetColumns.gs from your PC (121 lines)');
+    lines.push('  3. Paste the FULL SheetColumns.gs from your PC');
     lines.push('  4. First line must be: const SheetColumns = (function () {');
     lines.push('  5. Last lines must include RENEWAL and end with: })();');
   lines.push('  6. Confirm all project .gs files exist in the project sidebar');
@@ -35,8 +35,14 @@ function debugWhatIsBroken() {
   } else if (!SheetColumns.TRAIN_BOOKING || SheetColumns.TRAIN_BOOKING.LAST_COLUMN !== 17) {
     lines.push('ROOT CAUSE: SheetColumns.gs missing TRAIN_BOOKING (train IRCTC import)');
     lines.push('FIX: Paste latest SheetColumns.gs from your PC (includes TRAIN_ROUTE + TRAIN_BOOKING).');
+  } else if (!SheetColumns.TRAIN_ROUTE || SheetColumns.TRAIN_ROUTE.LAST_COLUMN !== 15) {
+    lines.push('ROOT CAUSE: SheetColumns.gs TRAIN_ROUTE section outdated (expected 15 columns incl. Skip Dates)');
+    lines.push(
+      'Actual LAST_COLUMN: ' +
+        (SheetColumns.TRAIN_ROUTE ? SheetColumns.TRAIN_ROUTE.LAST_COLUMN : '(TRAIN_ROUTE missing)')
+    );
   } else {
-    lines.push('OK: SheetColumns, RENEWAL, and TRAIN_BOOKING look correct');
+    lines.push('OK: SheetColumns, RENEWAL, TRAIN_ROUTE, and TRAIN_BOOKING look correct');
   }
 
   lines.push('');

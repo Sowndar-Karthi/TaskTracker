@@ -107,6 +107,33 @@ const TrainReminderModule = (function () {
     return SpreadsheetUtils.normalizeText(email || '');
   }
 
+  /** Dedupe key: same From/To + travel date from multiple route rows → one pending row. */
+  function pendingEntryKey_(entry) {
+    const route = entry.route || {};
+    const dateKey = Utilities.formatDate(entry.travelDate, getTimezone_(), 'yyyy-MM-dd');
+    return (
+      SpreadsheetUtils.normalizeText(route.fromStation) +
+      '|' +
+      SpreadsheetUtils.normalizeText(route.toStation) +
+      '|' +
+      dateKey
+    );
+  }
+
+  function dedupePendingEntries_(pendingEntries) {
+    const seen = {};
+    const result = [];
+    (pendingEntries || []).forEach(function (entry) {
+      const key = pendingEntryKey_(entry);
+      if (seen[key]) {
+        return;
+      }
+      seen[key] = true;
+      result.push(entry);
+    });
+    return result;
+  }
+
   function typeLabel_(kind, daysBefore) {
     if (kind === 'PENDING') {
       return 'PENDING — not booked yet';
@@ -790,10 +817,12 @@ const TrainReminderModule = (function () {
       const due = group.entries || [];
       var pending = group.pending || [];
 
-      // Sort pending by travel date soonest first
-      pending = pending.slice().sort(function (a, b) {
-        return a.travelDate.getTime() - b.travelDate.getTime();
-      });
+      // Sort pending by travel date soonest first; drop duplicates (e.g. weekly + one-time same date)
+      pending = dedupePendingEntries_(
+        pending.slice().sort(function (a, b) {
+          return a.travelDate.getTime() - b.travelDate.getTime();
+        })
+      );
 
       if (due.length === 0 && pending.length === 0) {
         return;

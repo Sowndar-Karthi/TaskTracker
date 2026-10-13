@@ -49,6 +49,11 @@ const AppConfig = (function () {
     return IS_TESTING ? TEST_SPREADSHEET_ID : PRODUCTION_SPREADSHEET_ID;
   }
 
+  function isSpreadsheetIdConfigured_() {
+    const id = String(getActiveSpreadsheetId_() || '').trim();
+    return id.length > 0;
+  }
+
   function getSpreadsheet_() {
     const spreadsheetId = getActiveSpreadsheetId_();
     if (spreadsheetId) {
@@ -62,6 +67,7 @@ const AppConfig = (function () {
       return IS_TESTING;
     },
     getSpreadsheetId: getActiveSpreadsheetId_,
+    isSpreadsheetIdConfigured: isSpreadsheetIdConfigured_,
     getSpreadsheet: getSpreadsheet_,
     getHeaderRow: function () {
       return HEADER_ROW;

@@ -188,7 +188,7 @@ const ScriptDiagnosticsModule = (function () {
     EMAIL: 7,
     ERROR: 12,
     RENEWAL: 14,
-    TRAIN_ROUTE: 14,
+    TRAIN_ROUTE: 15,
     TRAIN_BOOKING: 17,
   };
 

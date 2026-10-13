@@ -89,6 +89,24 @@ function setupApp() {
     };
   }
 
+  if (!AppConfig.isSpreadsheetIdConfigured()) {
+    const idWarning =
+      'PRODUCTION_SPREADSHEET_ID (or TEST_SPREADSHEET_ID) is empty in AppConfig.gs — ' +
+      'onEdit trigger will bind to the active spreadsheet at setup time. ' +
+      'Set the spreadsheet ID from File → Share → copy link, then re-run setupApp.';
+    Logger.log('WARNING: ' + idWarning);
+    ErrorLogModule.warning('Setup', 'setupApp', idWarning, { triggerSource: 'manual' });
+    try {
+      SpreadsheetApp.getActiveSpreadsheet().toast(
+        'Set PRODUCTION_SPREADSHEET_ID in AppConfig.gs, then re-run setupApp',
+        'Task Tracker setup',
+        12
+      );
+    } catch (uiErr) {
+      // ignore
+    }
+  }
+
   const validation = MatchingSheetModule.validateMappingsExist();
   if (!validation.valid) {
     Logger.log('WARNING: Matching Sheet validation failed: ' + validation.errors.join('; '));

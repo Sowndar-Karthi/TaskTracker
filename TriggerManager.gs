@@ -73,8 +73,17 @@ const TriggerManager = (function () {
   }
 
   function initializeTriggers_() {
-    const spreadsheetId = AppConfig.getSpreadsheetId() || SpreadsheetApp.getActiveSpreadsheet().getId();
+    const configuredId = AppConfig.getSpreadsheetId();
+    const spreadsheetId =
+      configuredId || SpreadsheetApp.getActiveSpreadsheet().getId();
     const environment = AppConfig.isTesting() ? 'TEST' : 'PRODUCTION';
+
+    if (!configuredId) {
+      console.warn(
+        'TriggerManager.initializeTriggers: no spreadsheet ID in AppConfig — using active spreadsheet',
+        { spreadsheetId: spreadsheetId }
+      );
+    }
 
     console.log('TriggerManager.initializeTriggers: starting in ' + environment, {
       spreadsheetId: spreadsheetId,

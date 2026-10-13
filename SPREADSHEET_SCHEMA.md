@@ -4,7 +4,7 @@
 > Code and spreadsheet structure must stay in sync. See `.cursorrules` §9 for rules.
 
 **Spreadsheet name:** Team Project Tracker  
-**Last updated:** 2026-07-19  
+**Last updated:** 2026-08-27  
 **Production spreadsheet ID:** _(set in `AppConfig.gs`)_  
 **Test spreadsheet ID:** _(set in `AppConfig.gs`)_
 
@@ -37,6 +37,7 @@
 | 📧 Email Settings | Email alerts: recipients, data sheet, schedule | 1 | Active |
 | _Completion Queue | Hidden — delayed completion move queue (auto-created by script) | 1 | System |
 | Error | Automation error & warning log for debugging and fixes | 1 | System |
+| Renewal Tracker | Recurring bills/subscriptions — due dates and email reminders | 1 | Active |
 | Train Route | Recurring train travel templates (day, stations, reminders) | 1 | Active |
 | Train Booking History | Bookings imported from IRCTC email + manual | 1 | Active |
 | Train Completed Journeys | Archived completed train journeys (same columns as Booking History) | 1 | Active |
@@ -523,8 +524,42 @@ Defined in `SheetColumns.gs`.
 | `* Task Tracker` | Status = complete | `* Completed Task` | Archive row | Task moved/copied on completion |
 | 📧 Email Settings | `DATA SHEET NAME` | Named task tracker | — | Alert source sheet |
 | Gmail (IRCTC) | Unread confirmation | Train Booking History | Booking row | TrainIrctcImportModule — hourly / manual |
-| Train Booking History | Completed / past journey | Train Completed Journeys | Archived row | Manual for now (auto-archive TBD) |
+| Train Booking History | Completed / past journey | Train Completed Journeys | Archived row | TrainJourneyArchiveModule — daily @ hour 9 |
 | Match Place | Station label (col A) | Train Booking History | From / To | Canonical label mapping on import |
+
+---
+
+## Renewal Tracker
+
+**Tab name:** `Renewal Tracker`  
+**Purpose:** Track recurring renewals (credit cards, subscriptions, etc.) with calculated next due dates and scheduled email reminders.  
+**Header row:** 1 | **Data starts:** 2
+
+| Col | Index | Field Name | Type | Required | Description | Used By |
+|-----|-------|------------|------|----------|-------------|---------|
+| A | 1 | Item Name | Text | Yes | Label e.g. `AWS`, `Visa Card` | RenewalReminderModule |
+| B | 2 | Category | Text | No | e.g. `Credit Card`, `Subscription` | RenewalReminderModule |
+| C | 3 | Recurrence Interval | Number | Yes | e.g. `1` | RenewalDueDateModule |
+| D | 4 | Recurrence Unit | Text | Yes | `Month`, `Year`, etc. | RenewalDueDateModule |
+| E | 5 | Anchor Type | Text | Yes | How due date is anchored | RenewalDueDateModule |
+| F | 6 | Anchor Date | Date | Conditional | Start/anchor date when required by anchor type | RenewalDueDateModule |
+| G | 7 | Due Day of Month | Number | Conditional | Day-of-month for monthly anchors | RenewalDueDateModule |
+| H | 8 | Minimum Due Amount | Number | No | For credit-card style reminders | RenewalReminderModule |
+| I | 9 | Total Due Amount | Number | No | Total balance due | RenewalReminderModule |
+| J | 10 | Last Paid Date | Date | No | Last payment date | RenewalDueDateModule |
+| K | 11 | Next Due Date | Date | Yes | Calculated or manual next due | RenewalReminderModule |
+| L | 12 | Reminder Days Before | Text | Yes | Comma list e.g. `7,3,1,0` | RenewalReminderModule |
+| M | 13 | Reminder Email | Text | Yes | Comma-separated recipients | RenewalReminderModule |
+| N | 14 | Status | Text | Yes | `Active`, `Due Soon`, etc. — only Active/Due Soon get reminders | RenewalTrackerModule |
+
+**Triggers / entry points**
+- Daily @ hour 9 (script project timezone): `processScheduledRenewalReminders_`
+- onEdit on recalc columns: `RenewalReminderHandler`
+- Manual: functions in `RenewalReminderHandler.gs`
+
+**Code constants:** `SheetColumns.RENEWAL.*` · `AppConfig.getRenewalTrackerSheetName()`
+
+**Note:** Daily trigger hour uses **script project timezone** (File → Project settings), not Email Settings TIMEZONE. Set project timezone to `Asia/Kolkata` for IST 9:00 AM.
 
 ---
 
@@ -648,6 +683,7 @@ If the sheet is missing, email station text is stored as-is.
 | 2026-07-19 | Update: TrainReminder digest | Per-recipient digests; 90-day missing list; Status booking-open countdown; From/To columns | AppConfig, TrainReminderModule |
 | 2026-07-19 | Fix: booking match | Train reminder match accepts reverse From/To on same journey date | TrainBookingHistoryModule |
 | 2026-07-19 | Feature: Skip Dates | Train Route col N Skip Dates — exclude specific weeks from weekly reminders | Train Route, SheetColumns, TrainRouteModule |
+| 2026-08-27 | Fix: audit fixes | Completion handler excludes completed sheets; train pending dedupe; main sync columns; setup ID warning | CompletionTaskHandler, Setup, TrainReminderModule, TaskSyncHandler |
 
 ### How to log changes
 

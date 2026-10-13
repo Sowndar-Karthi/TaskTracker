@@ -203,11 +203,18 @@ Routine skips (no task match, empty cells) are **not** logged — only real erro
    If you add a new sheet or column in the spreadsheet, **update that file too**.
 
 5. **Run setup (admin only, once)**  
-   In the script editor, select `setupApp` and click **Run**.  
+   In the script editor, run **`authorizeApp()`** first (grants Gmail + Sheets + Triggers), then **`setupApp()`**.  
    This installs **installable triggers** so automation runs for all users without repeated permission prompts.
 
-6. **Authorize the script**  
-   The admin who runs `setupApp()` must approve the requested scopes (Spreadsheet, Triggers, etc.).
+6. **Set script project timezone**  
+   In Apps Script: **Project settings → Time zone → `(GMT+05:30) India Standard Time`**.  
+   Daily jobs (renewal reminders, train archive) use `.atHour(9)` in **script timezone**, not Email Settings `TIMEZONE`.
+
+7. **Authorize the script**  
+   The admin who runs `setupApp()` must approve the requested scopes (Spreadsheet, Triggers, Gmail, etc.).
+
+8. **Maintenance (optional, quarterly)**  
+   Run **`runCleanupScriptProperties()`** to prune dedupe keys older than 90 days.
 
 ---
 

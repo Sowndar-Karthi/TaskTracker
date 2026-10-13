@@ -23,6 +23,11 @@ const CompletionTaskHandler = (function () {
       return false;
     }
 
+    // Only active main/sub task sheets — never re-queue rows on completed archive tabs.
+    if (sheetInfo.role !== 'main' && sheetInfo.role !== 'sub') {
+      return false;
+    }
+
     const statusCol = getStatusColumnForRole_(sheetInfo.role);
     const startCol = e.range.getColumn();
     const endCol = startCol + e.range.getNumColumns() - 1;
@@ -64,6 +69,9 @@ const CompletionTaskHandler = (function () {
   function processEdit_(e) {
     const sheet = e.range.getSheet();
     const sheetInfo = MatchingSheetModule.getSheetRole(sheet.getName());
+    if (!sheetInfo || (sheetInfo.role !== 'main' && sheetInfo.role !== 'sub')) {
+      return [];
+    }
     const startRow = e.range.getRow();
     const numRows = e.range.getNumRows();
     const results = [];
@@ -157,6 +165,9 @@ function runScheduleCompletionForRow(sheetName, rowIndex) {
   const sheetInfo = MatchingSheetModule.getSheetRole(sheetName);
   if (!sheet || !sheetInfo) {
     return { success: false, error: 'Sheet or mapping not found' };
+  }
+  if (sheetInfo.role !== 'main' && sheetInfo.role !== 'sub') {
+    return { success: false, error: 'Completion queue applies to main/sub sheets only' };
   }
   const statusCol = sheetInfo.role === 'sub' ? SheetColumns.SUB.STATUS : SheetColumns.MAIN.STATUS;
   const statusValue = sheet.getRange(rowIndex, statusCol).getValue();

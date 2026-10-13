@@ -7,7 +7,23 @@ const TaskSyncHandler = (function () {
 
   const LOCK_TIMEOUT_MS = 30000;
 
-  const MAIN_TRIGGER_COLUMNS = [SheetColumns.MAIN.TASK];
+  /** Mirror SubTaskSyncModule.SYNC_FIELD_MAP main columns + Task (renaming task re-links subs). */
+  const MAIN_TRIGGER_COLUMNS = [
+    SheetColumns.MAIN.TASK,
+    SheetColumns.MAIN.PROJECT_NAME,
+    SheetColumns.MAIN.PAGE_URL,
+    SheetColumns.MAIN.PRIORITY,
+    SheetColumns.MAIN.ASSIGN,
+    SheetColumns.MAIN.START_DATE,
+    SheetColumns.MAIN.END_DATE,
+    SheetColumns.MAIN.AS_PER_WO,
+    SheetColumns.MAIN.ENV,
+    SheetColumns.MAIN.INFORMED,
+    SheetColumns.MAIN.SUPPORT_BLOCKER,
+    SheetColumns.MAIN.FUNCTIONALITY,
+    SheetColumns.MAIN.MAIL_SUBJECT,
+    SheetColumns.MAIN.INTERNAL_MAIL_SUBJECT,
+  ];
   const SUB_TRIGGER_COLUMNS = [
     SheetColumns.SUB.MAIN_TASK_NAME,
     SheetColumns.SUB.ESTIMATED_EFFORT,
