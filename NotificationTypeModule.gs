@@ -29,7 +29,7 @@ const NotificationTypeModule = (function () {
 
   /**
    * Parses comma-separated notification types, merging fragments for multi-word statuses.
-   * e.g. "Under,Review & Testing" → "Under Review & Testing"
+   * e.g. "Internal,QA / Review" → "Internal QA / Review"
    */
   function parseNotificationTypes_(rawValue) {
     if (!rawValue || String(rawValue).trim() === '') {

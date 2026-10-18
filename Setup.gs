@@ -153,6 +153,21 @@ function setupApp() {
     );
   }
 
+  const gmailArchiveSheet = GmailArchiveRulesModule.ensureRulesSheet();
+  if (!gmailArchiveSheet.success) {
+    Logger.log('WARNING: Gmail Archive Rules — ' + gmailArchiveSheet.error);
+    ErrorLogModule.warning('Setup', 'setupApp', gmailArchiveSheet.error || 'Gmail Archive Rules unavailable', {
+      triggerSource: 'manual',
+    });
+  } else {
+    Logger.log(
+      'Gmail Archive Rules OK — ' +
+        GmailArchiveRulesModule.readActiveRules().length +
+        ' active rule(s)' +
+        (gmailArchiveSheet.created ? ' (sheet created)' : '')
+    );
+  }
+
   return TriggerManager.initializeTriggers();
 }
 

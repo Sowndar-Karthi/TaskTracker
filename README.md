@@ -103,8 +103,8 @@ When a user selects a **completion status** on **Umbraco Task Tracker** (column 
 |---------------------------------------------------|
 | Completed |
 | Closed / Cancelled |
+| Duplicate / Won't Fix |
 | Closed – Billable |
-| Closed – Not Proceeding |
 
 **Flow:**
 1. User selects a completion status → row is queued (hidden `_Completion Queue` sheet).
@@ -142,7 +142,7 @@ Configured on **📧 Email Settings** (one row per monitored sheet):
 | Data sheet | Umbraco Task Tracker |
 | Timezone | IST |
 | Alert times | 9:30 AM, 13:00, 15:00 |
-| Notification types | Requirements Not Clear, On Hold / Blocked, Waiting for Client Input, Under Review & Testing, Changes Requested / Rework, **High** |
+| Notification types | Requirements Not Clear, On Hold / Blocked, Waiting for Client Input, Internal QA / Review, Changes Requested / Rework, Re-opened, **High** |
 
 **When emails are sent:**
 

@@ -107,7 +107,7 @@ const RenewalReminderModule = (function () {
       timing = 'Due in ' + daysBefore + ' days';
     }
 
-    return 'Renewal Reminder: ' + item.itemName + ' — ' + timing;
+    return '[Renewal] ' + item.itemName + ' — ' + timing;
   }
 
   function buildReminderHtml_(item, daysBefore) {

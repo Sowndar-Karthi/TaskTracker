@@ -13,7 +13,17 @@ const ScriptDiagnosticsModule = (function () {
   {
     file: 'SheetColumns.gs',
     module: 'SheetColumns',
-    exports: ['MAIN', 'SUB', 'MATCHING', 'EMAIL', 'ERROR', 'RENEWAL', 'TRAIN_ROUTE', 'TRAIN_BOOKING'],
+    exports: [
+      'MAIN',
+      'SUB',
+      'MATCHING',
+      'EMAIL',
+      'GMAIL_ARCHIVE',
+      'ERROR',
+      'RENEWAL',
+      'TRAIN_ROUTE',
+      'TRAIN_BOOKING',
+    ],
   },
   {
     file: 'SpreadsheetUtils.gs',
@@ -127,8 +137,16 @@ const ScriptDiagnosticsModule = (function () {
   {
     file: 'TrainBookingHistoryModule.gs',
     module: 'TrainBookingHistoryModule',
-    exports: ['getBookingSheet', 'appendParsedRow', 'rowExists', 'validateSheetExists', 'hasMatchingBooking', 'sortByJourneyDate'],
-    functions: ['runSortTrainBookingHistory'],
+    exports: [
+      'getBookingSheet',
+      'appendParsedRow',
+      'rowExists',
+      'validateSheetExists',
+      'hasMatchingBooking',
+      'sortByJourneyDate',
+      'debugMatch',
+    ],
+    functions: ['runSortTrainBookingHistory', 'debugTrainBookingMatch'],
   },
   {
     file: 'TrainIrctcParseModule.gs',
@@ -186,6 +204,7 @@ const ScriptDiagnosticsModule = (function () {
     SUB: 25,
     MATCHING: 4,
     EMAIL: 7,
+    GMAIL_ARCHIVE: 6,
     ERROR: 12,
     RENEWAL: 14,
     TRAIN_ROUTE: 15,

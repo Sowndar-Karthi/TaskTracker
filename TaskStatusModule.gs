@@ -5,25 +5,29 @@ const TaskStatusModule = (function () {
   'use strict';
 
   const ALL_STATUSES = [
+    'Estimate Pending',
     'Pipeline / To Do',
-    'Requirements Not Clear',
     'In Progress',
-    'On Hold / Blocked',
-    'Waiting for Client Input',
-    'Under Review & Testing',
-    'Changes Requested / Rework',
-    'Ready for Execution',
+    'Internal QA / Review',
+    'Client UAT',
+    'Waiting for Client Approval',
+    'Deployed – Awaiting Verification',
     'Completed',
+    'Requirements Not Clear',
+    'Waiting for Client Input',
+    'On Hold / Blocked',
+    'Changes Requested / Rework',
+    'Re-opened',
     'Closed / Cancelled',
+    "Duplicate / Won't Fix",
     'Closed – Billable',
-    'Closed – Not Proceeding',
   ];
 
   const COMPLETION_STATUSES = [
     'Completed',
     'Closed / Cancelled',
+    "Duplicate / Won't Fix",
     'Closed – Billable',
-    'Closed – Not Proceeding',
   ];
 
   function normalizeStatus_(value) {
@@ -33,6 +37,7 @@ const TaskStatusModule = (function () {
     return String(value)
       .trim()
       .replace(/\u2013|\u2014/g, '-')
+      .replace(/\u2019/g, "'")
       .replace(/\s+/g, ' ')
       .toLowerCase();
   }

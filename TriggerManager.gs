@@ -12,6 +12,7 @@ const TriggerManager = (function () {
     SCHEDULED_IRCTC_IMPORT: 'processScheduledIrctcImport_',
     SCHEDULED_TRAIN_REMINDERS: 'processScheduledTrainReminders_',
     SCHEDULED_TRAIN_ARCHIVE: 'processScheduledTrainArchive_',
+    SCHEDULED_GMAIL_ARCHIVE_RULES: 'processScheduledGmailArchiveRules_',
   };
 
   function removeAllProjectTriggers_() {
@@ -62,6 +63,14 @@ const TriggerManager = (function () {
       .create();
   }
 
+  function createGmailArchiveRulesTrigger_() {
+    ScriptApp.newTrigger(HANDLERS.SCHEDULED_GMAIL_ARCHIVE_RULES)
+      .timeBased()
+      .everyDays(1)
+      .atHour(AppConfig.getGmailArchiveRulesHour())
+      .create();
+  }
+
   function listProjectTriggers_() {
     return ScriptApp.getProjectTriggers().map(function (trigger) {
       return {
@@ -97,6 +106,7 @@ const TriggerManager = (function () {
     createIrctcImportTrigger_();
     createTrainReminderTrigger_();
     createTrainArchiveTrigger_();
+    createGmailArchiveRulesTrigger_();
 
     console.log('TriggerManager.initializeTriggers: complete', {
       triggers: listProjectTriggers_(),

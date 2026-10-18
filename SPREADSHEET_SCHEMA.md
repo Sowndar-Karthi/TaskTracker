@@ -4,7 +4,7 @@
 > Code and spreadsheet structure must stay in sync. See `.cursorrules` §9 for rules.
 
 **Spreadsheet name:** Team Project Tracker  
-**Last updated:** 2026-08-27  
+**Last updated:** 2026-10-18  
 **Production spreadsheet ID:** _(set in `AppConfig.gs`)_  
 **Test spreadsheet ID:** _(set in `AppConfig.gs`)_
 
@@ -35,6 +35,7 @@
 | Product Completed Task | Archived completed Product tasks | 1 | Active |
 | Matching Sheet | Maps main → sub → completed sheets per team | 1 | Active |
 | 📧 Email Settings | Email alerts: recipients, data sheet, schedule | 1 | Active |
+| 📧 Gmail Archive Rules | After N days, apply Gmail label (+ optional archive) by subject tag | 1 | Active |
 | _Completion Queue | Hidden — delayed completion move queue (auto-created by script) | 1 | System |
 | Error | Automation error & warning log for debugging and fixes | 1 | System |
 | Renewal Tracker | Recurring bills/subscriptions — due dates and email reminders | 1 | Active |
@@ -132,22 +133,27 @@ The following **6 main task sheets** and **3 completed archive sheets** share th
 
 ### Allowed status values (dropdown)
 
-Used on **Status** column for main task sheets (col **I**) and sub-task sheets (col **J**):
+Used on **Status** column for main task sheets (col **I**) and sub-task sheets (col **J**).  
+Dropdown text must match exactly (en-dash `–` where shown).
 
-| Status |
-|--------|
-| Pipeline / To Do |
-| Requirements Not Clear |
-| In Progress |
-| On Hold / Blocked |
-| Waiting for Client Input |
-| Under Review & Testing |
-| Changes Requested / Rework |
-| Ready for Execution |
-| Completed |
-| Closed / Cancelled |
-| Closed – Billable |
-| Closed – Not Proceeding |
+| Status | Meaning |
+|--------|---------|
+| Estimate Pending | Scope defined; estimate/quotation awaiting client approval before pipeline |
+| Pipeline / To Do | Approved task queued; not yet started |
+| In Progress | Active development or configuration by assigned resource |
+| Internal QA / Review | Development complete; internal testing / peer review |
+| Client UAT | Client testing in test/staging |
+| Waiting for Client Approval | UAT done; awaiting formal client sign-off |
+| Deployed – Awaiting Verification | Released to Production; pending verification / final sign-off |
+| Completed | Deployed, verified in Production, and signed off |
+| Requirements Not Clear | Paused — scope/logic/design insufficient; internal clarification needed |
+| Waiting for Client Input | Blocked on client data, access, or clarification |
+| On Hold / Blocked | Stopped — dependency, bottleneck, vendor delay, or resource unavailability |
+| Changes Requested / Rework | Client/QA requested modifications; back for development |
+| Re-opened | Issue found after completion; returned to workflow |
+| Closed / Cancelled | Created in error or decided against before significant work |
+| Duplicate / Won't Fix | Duplicate of another task, or decision not to act |
+| Closed – Billable | Work done but client chose not to go live; hours may be invoiced |
 
 ### Completion statuses (auto-move after 24 hours)
 
@@ -155,8 +161,10 @@ When any of these statuses is selected, the row is queued and moved to the team'
 
 - `Completed`
 - `Closed / Cancelled`
+- `Duplicate / Won't Fix`
 - `Closed – Billable`
-- `Closed – Not Proceeding`
+
+**Not** completion (stay on active sheet): `Deployed – Awaiting Verification`, `Re-opened`, and all other non-completion statuses above.
 
 | Source sheet | Status column | Completed destination |
 |--------------|---------------|------------------------|
@@ -385,14 +393,14 @@ Main effort columns are **not** updated. No rollup runs.
 | DATA SHEET NAME | `Umbraco Task Tracker` |
 | TIMEZONE | `IST` |
 | Alert Time | `9:30 AM, 13:00, 15:00` |
-| Notification Type | `Requirements Not Clear, On Hold / Blocked, Waiting for Client Input, Under Review & Testing, Changes Requested / Rework, High` |
+| Notification Type | `Requirements Not Clear, On Hold / Blocked, Waiting for Client Input, Internal QA / Review, Changes Requested / Rework, Re-opened, High` |
 
 ### Notification Type rules
 
 - Comma-separated list of **status** values and/or **priority** values (`High`, `Medium`, `Low`).
 - A task triggers an alert when its **Status** OR **Priority** matches any entry.
-- Multi-word statuses with commas in the cell (e.g. `Under,Review & Testing`) are auto-merged to `Under Review & Testing`.
-- Recommended format: `Requirements Not Clear, On Hold / Blocked, High`
+- Multi-word statuses with commas in the cell (e.g. `Internal,QA / Review`) are auto-merged to `Internal QA / Review`.
+- Recommended format: `Requirements Not Clear, On Hold / Blocked, Internal QA / Review, High`
 
 ### Alert behaviour
 
@@ -400,6 +408,54 @@ Main effort columns are **not** updated. No rollup runs.
 |---------|------|
 | **Scheduled digest** | At each Alert Time (in TIMEZONE), sends one email listing all matching tasks on DATA SHEET NAME |
 | **Immediate alert** | When Status or Priority is edited to a matching value on DATA SHEET NAME |
+
+### Email subject tags (Gmail filters)
+
+| Filter in Gmail | Matches |
+|-----------------|---------|
+| `subject:[TaskTracker]` | All task digest + immediate alerts |
+| `subject:[TaskTracker][Digest]` | Scheduled digests only |
+| `subject:[TaskTracker][Alert]` | Immediate status/priority alerts only |
+| `subject:[Train]` | Train reminder digests |
+| `subject:[Renewal]` | Renewal reminders |
+
+Examples:
+- `[TaskTracker][Digest] Sowndar_TASK (5 task(s))`
+- `[TaskTracker][Alert] Fix login — On Hold / Blocked [Sowndar_TASK]`
+- `[Train] due:1 (book:0, travel:1) · missing:9`
+- `[Renewal] AWS — Due in 3 days`
+
+---
+
+## Sheet: 📧 Gmail Archive Rules
+
+**Tab name:** `📧 Gmail Archive Rules`  
+**Purpose:** Sheet-driven Gmail automation — after N days, apply a label (and optionally archive from Inbox) for mails whose subject contains a tag. **Add a new row for each new subject/label rule; no code change.**  
+**Header row:** 1 | **Data starts:** 2  
+**Created by:** `setupApp()` / `GmailArchiveRulesModule.ensureRulesSheet()` with starter rows if missing.
+
+| Col | Index | Field Name | Type | Required | Description | Used By |
+|-----|-------|------------|------|----------|-------------|---------|
+| A | 1 | Active | Text | Yes | `Yes` / `No` | GmailArchiveRulesModule |
+| B | 2 | Subject Contains | Text | Yes | e.g. `[TaskTracker]`, `[Train]`, `[Renewal]` | Gmail search `subject:…` |
+| C | 3 | Label Name | Text | Yes | Gmail label to apply; nested OK e.g. `TaskTracker/Older-3d` | GmailApp.createLabel / addLabel |
+| D | 4 | Older Than Days | Number | Yes | e.g. `3` → Gmail `older_than:3d` | GmailArchiveRulesModule |
+| E | 5 | Archive Inbox | Text | No | `Yes` = move out of Inbox after labeling | GmailArchiveRulesModule |
+| F | 6 | Notes | Text | No | Free text | — |
+
+**Default starter rows**
+
+| Active | Subject Contains | Label Name | Older Than Days | Archive Inbox |
+|--------|------------------|------------|-----------------|---------------|
+| Yes | `[TaskTracker]` | `TaskTracker/Older-3d` | 3 | Yes |
+| Yes | `[Train]` | `Train/Older-3d` | 3 | Yes |
+| Yes | `[Renewal]` | `Renewal/Older-3d` | 3 | Yes |
+
+**Triggers / entry points**
+- Daily @ **2:00 AM** (script timezone — set project TZ to `Asia/Kolkata` for IST): `processScheduledGmailArchiveRules_`
+- Manual: `runGmailArchiveRulesNow()`
+
+**Code constants:** `SheetColumns.GMAIL_ARCHIVE.*` · `AppConfig.getGmailArchiveRulesSheetName()`
 
 ### Email content by sheet type
 
@@ -684,6 +740,9 @@ If the sheet is missing, email station text is stored as-is.
 | 2026-07-19 | Fix: booking match | Train reminder match accepts reverse From/To on same journey date | TrainBookingHistoryModule |
 | 2026-07-19 | Feature: Skip Dates | Train Route col N Skip Dates — exclude specific weeks from weekly reminders | Train Route, SheetColumns, TrainRouteModule |
 | 2026-08-27 | Fix: audit fixes | Completion handler excludes completed sheets; train pending dedupe; main sync columns; setup ID warning | CompletionTaskHandler, Setup, TrainReminderModule, TaskSyncHandler |
+| 2026-10-18 | User: status redesign | New workflow statuses; removed Under Review & Testing / Ready for Execution / Closed – Not Proceeding; completion includes Duplicate / Won't Fix | TaskStatusModule, Status dropdowns, Email Settings Notification Type |
+| 2026-10-18 | Update: email subjects | Filterable tags [TaskTracker][Digest]/[Alert], [Train], [Renewal] | NotificationService, TrainReminderModule, RenewalReminderModule |
+| 2026-10-18 | Feature: Gmail Archive Rules | Sheet-driven label/archive after N days; add row = new rule | 📧 Gmail Archive Rules, GmailArchiveRules*, TriggerManager |
 
 ### How to log changes
 

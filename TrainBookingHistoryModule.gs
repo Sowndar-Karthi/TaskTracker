@@ -266,35 +266,90 @@ const TrainBookingHistoryModule = (function () {
     }
   }
 
-  function stationCode_(value) {
+  /** Station code from "(MS)" style labels; empty if none. */
+  function extractStationCode_(value) {
     const m = String(value || '').match(/\(\s*([A-Za-z0-9]+)\s*\)/);
-    if (m) {
-      return m[1].toUpperCase();
-    }
-    return SpreadsheetUtils.normalizeText(value);
+    return m ? m[1].toUpperCase() : '';
   }
 
-  function datesMatch_(a, b) {
+  /** Station name without parenthetical code. */
+  function stationName_(value) {
+    return SpreadsheetUtils.normalizeText(
+      String(value || '')
+        .replace(/\s*\([^)]*\)\s*/g, ' ')
+        .replace(/\s+/g, ' ')
+    );
+  }
+
+  /**
+   * Match stations by IRCTC code and/or name.
+   * History "CHENNAI EGMORE (MS)" matches Route "CHENNAI EGMORE (MS)" or plain "CHENNAI EGMORE".
+   */
+  function stationsMatch_(a, b) {
     if (!a || !b) {
       return false;
     }
-    const tz = AppConfig.getTrainDateTimezone();
-    function toKey(value) {
-      if (value instanceof Date && !isNaN(value.getTime())) {
-        return Utilities.formatDate(value, tz, 'yyyy-MM-dd');
-      }
-      if (typeof TrainRouteModule !== 'undefined' && TrainRouteModule.parseDate) {
-        const parsed = TrainRouteModule.parseDate(value);
-        if (parsed) {
-          return Utilities.formatDate(parsed, tz, 'yyyy-MM-dd');
-        }
-      }
-      return SpreadsheetUtils.normalizeText(
-        String(value).replace(/\s+Scheduled\s+Departure[\s\S]*$/i, '')
-      );
+    const codeA = extractStationCode_(a);
+    const codeB = extractStationCode_(b);
+    if (codeA && codeB && codeA === codeB) {
+      return true;
     }
-    return toKey(a) === toKey(b);
+    const nameA = stationName_(a);
+    const nameB = stationName_(b);
+    if (nameA && nameB) {
+      if (nameA === nameB) {
+        return true;
+      }
+      if (nameA.indexOf(nameB) >= 0 || nameB.indexOf(nameA) >= 0) {
+        return true;
+      }
+    }
+    return SpreadsheetUtils.normalizeText(a) === SpreadsheetUtils.normalizeText(b);
   }
+
+  function dateKey_(value) {
+    if (value === null || value === undefined || value === '') {
+      return '';
+    }
+    const tz = AppConfig.getTrainDateTimezone() || 'Asia/Kolkata';
+    var cleaned = value;
+    if (!(value instanceof Date)) {
+      cleaned = String(value)
+        .replace(/\s+Scheduled\s+Departure[\s\S]*$/i, '')
+        .replace(/\s+\d{1,2}:\d{2}(:\d{2})?(\s*HRS)?\s*$/i, '')
+        .trim();
+    }
+    if (typeof TrainRouteModule !== 'undefined' && TrainRouteModule.parseDate) {
+      const parsed = TrainRouteModule.parseDate(cleaned);
+      if (parsed) {
+        return Utilities.formatDate(parsed, tz, 'yyyy-MM-dd');
+      }
+    }
+    if (cleaned instanceof Date && !isNaN(cleaned.getTime())) {
+      return Utilities.formatDate(cleaned, tz, 'yyyy-MM-dd');
+    }
+    return SpreadsheetUtils.normalizeText(String(cleaned));
+  }
+
+  function datesMatch_(a, b) {
+    const keyA = dateKey_(a);
+    const keyB = dateKey_(b);
+    return !!keyA && !!keyB && keyA === keyB;
+  }
+
+  function isCancelledStatus_(status) {
+    const s = SpreadsheetUtils.normalizeText(status);
+    if (!s) {
+      return false;
+    }
+    return (
+      s.indexOf('cancel') >= 0 ||
+      s.indexOf('refund') >= 0 ||
+      s === 'w/l' ||
+      s.indexOf('not confirmed') >= 0
+    );
+  }
+
   function findHeaderIndex_(headers, candidates) {
     for (var i = 0; i < headers.length; i++) {
       const h = SpreadsheetUtils.normalizeText(headers[i]);
@@ -307,63 +362,111 @@ const TrainBookingHistoryModule = (function () {
     return -1;
   }
 
+  function sheetHasMatchingBooking_(sheet, fromStation, toStation, travelDate) {
+    if (!sheet || sheet.getLastRow() < AppConfig.getDataStartRow()) {
+      return false;
+    }
+
+    const lastCol = Math.max(sheet.getLastColumn(), SheetColumns.TRAIN_BOOKING.LAST_COLUMN);
+    const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    var fromIdx = findHeaderIndex_(headers, ['From', 'From Station']);
+    var toIdx = findHeaderIndex_(headers, ['To', 'To Station']);
+    var dateIdx = findHeaderIndex_(headers, ['Date of Journey', 'Travel Date']);
+    var statusIdx = findHeaderIndex_(headers, ['Status']);
+
+    if (fromIdx < 0) {
+      fromIdx = SheetColumns.TRAIN_BOOKING.FROM - 1;
+    }
+    if (toIdx < 0) {
+      toIdx = SheetColumns.TRAIN_BOOKING.TO - 1;
+    }
+    if (dateIdx < 0) {
+      dateIdx = SheetColumns.TRAIN_BOOKING.DATE_OF_JOURNEY - 1;
+    }
+    if (statusIdx < 0) {
+      statusIdx = SheetColumns.TRAIN_BOOKING.STATUS - 1;
+    }
+
+    const lastRow = sheet.getLastRow();
+    const numRows = lastRow - AppConfig.getHeaderRow();
+    if (numRows < 1) {
+      return false;
+    }
+    const data = sheet.getRange(AppConfig.getDataStartRow(), 1, numRows, lastCol).getValues();
+
+    for (var i = 0; i < data.length; i++) {
+      const rowFrom = data[i][fromIdx];
+      const rowTo = data[i][toIdx];
+      const rowDate = data[i][dateIdx];
+      if (!rowFrom || !rowTo || !datesMatch_(rowDate, travelDate)) {
+        continue;
+      }
+      if (isCancelledStatus_(data[i][statusIdx])) {
+        continue;
+      }
+      const sameDirection = stationsMatch_(rowFrom, fromStation) && stationsMatch_(rowTo, toStation);
+      const reverseDirection = stationsMatch_(rowFrom, toStation) && stationsMatch_(rowTo, fromStation);
+      if (sameDirection || reverseDirection) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /**
-   * True if Booking History already has a trip matching from/to/travel date.
-   * Direction-agnostic: TBM→KLT and KLT→TBM on the same date both count as booked.
-   * Supports IRCTC headers or History-style headers (From Station / Travel Date).
+   * True if History (or Completed Journeys) already has this trip.
+   * Direction-agnostic; matches by station code and/or name + journey date.
+   * Cancelled/refunded rows do not count as booked.
    */
   function hasMatchingBooking_(fromStation, toStation, travelDate) {
     if (!fromStation || !toStation || !travelDate) {
       return false;
     }
 
-    const sheet = getBookingSheet_();
-    if (!sheet || sheet.getLastRow() < AppConfig.getDataStartRow()) {
-      return false;
-    }
-
     try {
-      const lastCol = Math.max(sheet.getLastColumn(), SheetColumns.TRAIN_BOOKING.LAST_COLUMN);
-      const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
-      var fromIdx = findHeaderIndex_(headers, ['From', 'From Station']);
-      var toIdx = findHeaderIndex_(headers, ['To', 'To Station']);
-      var dateIdx = findHeaderIndex_(headers, ['Date of Journey', 'Travel Date']);
-
-      if (fromIdx < 0) {
-        fromIdx = SheetColumns.TRAIN_BOOKING.FROM - 1;
-      }
-      if (toIdx < 0) {
-        toIdx = SheetColumns.TRAIN_BOOKING.TO - 1;
-      }
-      if (dateIdx < 0) {
-        dateIdx = SheetColumns.TRAIN_BOOKING.DATE_OF_JOURNEY - 1;
+      const history = getBookingSheet_();
+      if (sheetHasMatchingBooking_(history, fromStation, toStation, travelDate)) {
+        return true;
       }
 
-      const numRows = sheet.getLastRow() - AppConfig.getHeaderRow();
-      const data = sheet.getRange(AppConfig.getDataStartRow(), 1, numRows, lastCol).getValues();
-      const fromCode = stationCode_(fromStation);
-      const toCode = stationCode_(toStation);
-
-      for (var i = 0; i < data.length; i++) {
-        const rowFrom = stationCode_(data[i][fromIdx]);
-        const rowTo = stationCode_(data[i][toIdx]);
-        const rowDate = data[i][dateIdx];
-        if (!rowFrom || !rowTo || !datesMatch_(rowDate, travelDate)) {
-          continue;
-        }
-        const sameDirection = rowFrom === fromCode && rowTo === toCode;
-        const reverseDirection = rowFrom === toCode && rowTo === fromCode;
-        if (sameDirection || reverseDirection) {
-          return true;
-        }
+      const spreadsheet = getSpreadsheet_();
+      if (!spreadsheet) {
+        return false;
+      }
+      const completed = SpreadsheetUtils.getSheetByName(
+        spreadsheet,
+        AppConfig.getTrainCompletedJourneysSheetName()
+      );
+      if (sheetHasMatchingBooking_(completed, fromStation, toStation, travelDate)) {
+        return true;
       }
     } catch (err) {
       console.error('TrainBookingHistoryModule.hasMatchingBooking_ failed', {
+        fromStation: fromStation,
+        toStation: toStation,
+        travelDate: travelDate,
         error: err,
         stack: err && err.stack,
       });
     }
     return false;
+  }
+
+  /**
+   * Debug helper: for a route From/To + date, show whether History counts as booked.
+   * Run from Apps Script: debugTrainBookingMatch('CHENNAI EGMORE (MS)', 'KULITALAI (KLT)', '26-Jul-2026')
+   */
+  function debugMatch_(fromStation, toStation, travelDate) {
+    const booked = hasMatchingBooking_(fromStation, toStation, travelDate);
+    const result = {
+      fromStation: fromStation,
+      toStation: toStation,
+      travelDate: travelDate,
+      dateKey: dateKey_(travelDate),
+      booked: booked,
+    };
+    console.log('TrainBookingHistoryModule.debugMatch_', result);
+    return result;
   }
 
   return {
@@ -376,8 +479,17 @@ const TrainBookingHistoryModule = (function () {
     appendParsedRow: appendParsedRow_,
     sortByJourneyDate: sortByJourneyDate_,
     hasMatchingBooking: hasMatchingBooking_,
+    debugMatch: debugMatch_,
   };
 })();
+
+/**
+ * Manual: check if a From/To/date is treated as booked (excludes from Missing dates).
+ * Example: debugTrainBookingMatch('CHENNAI EGMORE (MS)', 'KULITALAI (KLT)', '26-Jul-2026')
+ */
+function debugTrainBookingMatch(fromStation, toStation, travelDate) {
+  return TrainBookingHistoryModule.debugMatch(fromStation, toStation, travelDate);
+}
 
 /**
  * Manual: sort Train Booking History by Date of Journey / Travel Date (oldest first).

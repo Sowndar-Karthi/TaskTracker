@@ -1,8 +1,17 @@
 /**
  * Sends email notifications for task status and priority alerts.
+ *
+ * Subject tags (Gmail filters):
+ * - All task mail:      subject:[TaskTracker]
+ * - Digests only:       subject:[TaskTracker][Digest]
+ * - Immediate only:     subject:[TaskTracker][Alert]
  */
 const NotificationService = (function () {
   'use strict';
+
+  const SUBJECT_PREFIX = '[TaskTracker]';
+  const SUBJECT_DIGEST = '[Digest]';
+  const SUBJECT_ALERT = '[Alert]';
 
   function sendEmail_(config, subject, htmlBody) {
     if (!config || !config.toEmails || config.toEmails.length === 0) {
@@ -44,7 +53,13 @@ const NotificationService = (function () {
     const sheetRole = TaskNotificationModule.getSheetRoleForTasks(tasks);
     const rowCount = batch ? batch.rowCount : tasks.length;
     var subject =
-      'Team Project Tracker Alert — ' + config.dataSheetName + ' (' + rowCount + ' task(s))';
+      SUBJECT_PREFIX +
+      SUBJECT_DIGEST +
+      ' ' +
+      config.dataSheetName +
+      ' (' +
+      rowCount +
+      ' task(s))';
 
     if (batch && batch.totalBatches > 1) {
       subject += ' — part ' + batch.batchNumber + ' of ' + batch.totalBatches;
@@ -123,7 +138,15 @@ const NotificationService = (function () {
           ? task.taskName || task.mainTaskName || 'Sub task'
           : task.taskName || 'Task';
       const subject =
-        'Task Alert: ' + taskLabel + ' — ' + matchedBy + ' [' + config.dataSheetName + ']';
+        SUBJECT_PREFIX +
+        SUBJECT_ALERT +
+        ' ' +
+        taskLabel +
+        ' — ' +
+        matchedBy +
+        ' [' +
+        config.dataSheetName +
+        ']';
       const htmlBody = TaskNotificationModule.buildImmediateHtml(config, task, matchedBy);
       return sendEmail_(config, subject, htmlBody);
     }
@@ -138,7 +161,9 @@ const NotificationService = (function () {
     const sendResults = [];
     chunks.forEach(function (chunkTasks, index) {
       var subject =
-        'Task Alert: ' +
+        SUBJECT_PREFIX +
+        SUBJECT_ALERT +
+        ' ' +
         parentLabel +
         ' (' +
         chunkTasks.length +

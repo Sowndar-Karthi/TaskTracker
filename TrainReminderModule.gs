@@ -555,7 +555,7 @@ const TrainReminderModule = (function () {
       return e.kind === 'TRAVEL';
     }).length;
     return (
-      'Train reminders — due:' +
+      '[Train] due:' +
       due.length +
       ' (book:' +
       bookCount +

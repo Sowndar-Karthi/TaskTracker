@@ -75,6 +75,20 @@ const SheetColumns = (function () {
     LAST_COLUMN: 7,
   };
 
+  /**
+   * 📧 Gmail Archive Rules — label/archive mail after N days by subject tag.
+   * Add a new row to support another subject/label without code changes.
+   */
+  const GMAIL_ARCHIVE = {
+    ACTIVE: 1,
+    SUBJECT_CONTAINS: 2,
+    LABEL_NAME: 3,
+    OLDER_THAN_DAYS: 4,
+    ARCHIVE_INBOX: 5,
+    NOTES: 6,
+    LAST_COLUMN: 6,
+  };
+
   const ERROR = {
     LOGGED_AT: 1,
     SEVERITY: 2,
@@ -162,6 +176,7 @@ const SheetColumns = (function () {
     SUB: SUB,
     MATCHING: MATCHING,
     EMAIL: EMAIL,
+    GMAIL_ARCHIVE: GMAIL_ARCHIVE,
     ERROR: ERROR,
     RENEWAL: RENEWAL,
     TRAIN_ROUTE: TRAIN_ROUTE,

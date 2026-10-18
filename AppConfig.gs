@@ -15,9 +15,15 @@ const AppConfig = (function () {
   /** Bootstrap tab name — team sheet names live on this sheet, not in code. */
   const MATCHING_SHEET_NAME = 'Matching Sheet';
   const EMAIL_SETTINGS_SHEET_NAME = '📧 Email Settings';
+  /** Sheet-driven Gmail label/archive rules (subject + older_than days). */
+  const GMAIL_ARCHIVE_RULES_SHEET_NAME = '📧 Gmail Archive Rules';
   const ERROR_SHEET_NAME = 'Error';
   const RENEWAL_TRACKER_SHEET_NAME = 'Renewal Tracker';
   const RENEWAL_REMINDER_HOUR = 9;
+  /** Daily hour (script project timezone) for 📧 Gmail Archive Rules — set project TZ to Asia/Kolkata for IST. */
+  const GMAIL_ARCHIVE_RULES_HOUR = 2;
+  /** Max Gmail threads processed per archive rule per daily run. */
+  const GMAIL_ARCHIVE_MAX_THREADS_PER_RULE = 50;
   /** Max sub/main rows per scheduled digest email (Gmail size limits). */
   const DIGEST_MAX_ROWS_PER_EMAIL = 100;
 
@@ -90,6 +96,12 @@ const AppConfig = (function () {
     getEmailSettingsSheetName: function () {
       return EMAIL_SETTINGS_SHEET_NAME;
     },
+    getGmailArchiveRulesSheetName: function () {
+      return GMAIL_ARCHIVE_RULES_SHEET_NAME;
+    },
+    getGmailArchiveMaxThreadsPerRule: function () {
+      return GMAIL_ARCHIVE_MAX_THREADS_PER_RULE;
+    },
     getErrorSheetName: function () {
       return ERROR_SHEET_NAME;
     },
@@ -101,6 +113,9 @@ const AppConfig = (function () {
     },
     getRenewalReminderHour: function () {
       return RENEWAL_REMINDER_HOUR;
+    },
+    getGmailArchiveRulesHour: function () {
+      return GMAIL_ARCHIVE_RULES_HOUR;
     },
     getTrainRouteSheetName: function () {
       return TRAIN_ROUTE_SHEET_NAME;
